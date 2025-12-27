@@ -1,0 +1,11 @@
+{
+    "id": 1,
+    "message": "\ud83d\ude80 SISTEMA ACTIVO: Las recargas de Movistar y Digitel est\u00e1n funcionando al 100% \u2726 TASA BCV: Actualizada \u2726 SOPORTE: Activo 24/7 para distribuidores. te amo",
+    "variant": "info",
+    "active": true,
+    "dismissible": true,
+    "audience": "ALL",
+    "includeDescendants": true,
+    "ownerScope": "ALL",
+    "ownerId": "1"
+}
