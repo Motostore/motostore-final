@@ -1,11 +1,9 @@
-# app/api/auth.py
-
 import os
 from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Depends, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm # <--- IMPORTANTE
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
@@ -22,7 +20,9 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 300  # 5 horas
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+
+# 👇 CAMBIO CLAVE: Apuntamos el Swagger a un endpoint especial que acepta formularios
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/swagger-login")
 
 SUPERUSER_USERNAME = "superuser"
 SUPERUSER_EMAIL = "superuser@motostore.test"
@@ -35,7 +35,6 @@ class RegisterCmd(BaseModel):
     email: EmailStr
     username: str
     password: str
-    # opcionales (si luego quieres registrarlos desde el front)
     cedula: Optional[str] = None
     telefono: Optional[str] = None
     full_name: Optional[str] = None
@@ -48,8 +47,6 @@ class UserView(BaseModel):
     role: str
     is_superuser: bool
     balance: float
-
-    # 👇 campos extra que ya existen en tu tabla
     is_active: Optional[bool] = True
     full_name: Optional[str] = None
     cedula: Optional[str] = None
@@ -65,7 +62,7 @@ class LoginRequest(BaseModel):
 
 class LoginResponse(BaseModel):
     access_token: str
-    token: str          # compatibilidad frontend
+    token: str          
     token_type: str
     user: UserView
 
@@ -77,10 +74,6 @@ class OAuthRequest(BaseModel):
 # ------------------ FUNCIONES DE AYUDA (Seguridad) ------------------ #
 
 def verify_password(plain_password: str, hashed_or_plain: str) -> bool:
-    """
-    - Si 'hashed_or_plain' es un bcrypt válido, lo verifica con passlib.
-    - Si no, hace fallback a comparación directa (compatibilidad con datos viejos).
-    """
     if not hashed_or_plain:
         return False
     try:
@@ -106,18 +99,13 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         detail="No se pudieron validar las credenciales",
         headers={"WWW-Authenticate": "Bearer"},
     )
-
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-
         user = None
-
-        # 1) buscar por id
         user_id = payload.get("id")
         if user_id is not None:
             user = db.query(models.User).filter(models.User.id == int(user_id)).first()
-
-        # 2) fallback por username (sub)
+        
         if user is None:
             username = payload.get("sub")
             if username:
@@ -129,7 +117,6 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     if user is None:
         raise credentials_exception
 
-    # opcional: bloquear usuarios inactivos
     if getattr(user, "is_active", True) is False:
         raise HTTPException(status_code=401, detail="Usuario inactivo")
 
@@ -151,7 +138,6 @@ def _generate_login_response(user: models.User) -> LoginResponse:
         user=user
     )
 
-
 def _find_user(email: Optional[str], username: Optional[str], password: str, db: Session) -> models.User:
     query = db.query(models.User)
 
@@ -166,7 +152,6 @@ def _find_user(email: Optional[str], username: Optional[str], password: str, db:
     if not user:
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
-    # 👇 prioridad: hashed_password -> password
     candidate_hash = getattr(user, "hashed_password", None) or getattr(user, "password", None) or ""
     if not verify_password(password, candidate_hash):
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
@@ -177,9 +162,25 @@ def _find_user(email: Optional[str], username: Optional[str], password: str, db:
     return user
 
 
+# 👇 ENDPOINT 1: PARA TU APP/FRONTEND (Usa JSON)
 @router.post("/login", response_model=LoginResponse)
-def login(req: LoginRequest, db: Session = Depends(get_db)):
+def login_json(req: LoginRequest, db: Session = Depends(get_db)):
+    """
+    Login estándar para Frontend/App Móvil que envía JSON.
+    """
     user = _find_user(req.email, req.username, req.password, db)
+    return _generate_login_response(user)
+
+
+# 👇 ENDPOINT 2: EXCLUSIVO PARA SWAGGER (Usa Formulario)
+@router.post("/swagger-login", response_model=LoginResponse, include_in_schema=False)
+def swagger_login_form(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    """
+    Endpoint oculto para que funcione el botón 'Authorize' de Swagger.
+    Swagger envía el email en el campo 'username'.
+    """
+    # Pasamos form_data.username como email, porque en el candado pones tu email ahí
+    user = _find_user(email=form_data.username, username=None, password=form_data.password, db=db)
     return _generate_login_response(user)
 
 
@@ -210,14 +211,10 @@ def register(cmd: RegisterCmd, db: Session = Depends(get_db)):
         full_name=(cmd.full_name or None),
         cedula=(cmd.cedula or None),
         telefono=(cmd.telefono or None),
-
         email=email,
         username=username,
-
-        # 🔒 guardamos hash en los dos campos para compatibilidad
         password=hashed,
         hashed_password=hashed,
-
         role="CLIENT",
         is_superuser=False,
         balance=0.0,
@@ -273,7 +270,3 @@ def login_with_google(req: OAuthRequest, db: Session = Depends(get_db)):
 def login_with_apple(req: OAuthRequest, db: Session = Depends(get_db)):
     user = _oauth_login_or_register(req.email, req.name, db)
     return _generate_login_response(user)
-
-
-
-
