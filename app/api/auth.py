@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Depends, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm # <--- IMPORTANTE
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
@@ -15,13 +15,13 @@ from app import models
 router = APIRouter()
 
 # --- CONFIGURACIÓN DE SEGURIDAD (JWT) ---
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "SECRET_KEY_SUPER_SECRETA_CAMBIAME_POR_ALGO_SEGURO")
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "M0t0St0r3_Pyth0n_2025_S3cur3_K3y_N3on")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 300  # 5 horas
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# 👇 CAMBIO CLAVE: Apuntamos el Swagger a un endpoint especial que acepta formularios
+# Apuntamos el Swagger a un endpoint especial que acepta formularios
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/swagger-login")
 
 SUPERUSER_USERNAME = "superuser"
@@ -123,7 +123,35 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     return user
 
 
-# ------------------ LOGIN / REGISTER ------------------ #
+# ------------------ LÓGICA DE BÚSQUEDA MEJORADA ------------------ #
+
+def _find_user(email: Optional[str], username: Optional[str], password: str, db: Session) -> models.User:
+    user = None
+    
+    # 1. Buscar por email si se proporciona
+    if email:
+        user = db.query(models.User).filter(models.User.email == email.strip().lower()).first()
+    
+    # 2. Si no se encontró o no había email, buscar por username
+    if not user and username:
+        user = db.query(models.User).filter(models.User.username == username.strip()).first()
+    
+    # 3. COMPATIBILIDAD FRONTEND: Si mandaron el email en el campo de 'username'
+    if not user and username and "@" in username:
+        user = db.query(models.User).filter(models.User.email == username.strip().lower()).first()
+
+    if not user:
+        raise HTTPException(status_code=401, detail="Usuario no encontrado")
+
+    # Verificar contraseña
+    candidate_hash = getattr(user, "hashed_password", None) or getattr(user, "password", None) or ""
+    if not verify_password(password, candidate_hash):
+        raise HTTPException(status_code=401, detail="Contraseña incorrecta")
+
+    if getattr(user, "is_active", True) is False:
+        raise HTTPException(status_code=401, detail="Usuario inactivo")
+
+    return user
 
 def _generate_login_response(user: models.User) -> LoginResponse:
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -138,57 +166,23 @@ def _generate_login_response(user: models.User) -> LoginResponse:
         user=user
     )
 
-def _find_user(email: Optional[str], username: Optional[str], password: str, db: Session) -> models.User:
-    query = db.query(models.User)
 
-    if email:
-        query = query.filter(models.User.email == email.strip().lower())
-    elif username:
-        query = query.filter(models.User.username == username.strip())
-    else:
-        raise HTTPException(status_code=400, detail="Debes enviar email o username")
+# ------------------ ENDPOINTS ------------------ #
 
-    user = query.first()
-    if not user:
-        raise HTTPException(status_code=401, detail="Credenciales inválidas")
-
-    candidate_hash = getattr(user, "hashed_password", None) or getattr(user, "password", None) or ""
-    if not verify_password(password, candidate_hash):
-        raise HTTPException(status_code=401, detail="Credenciales inválidas")
-
-    if getattr(user, "is_active", True) is False:
-        raise HTTPException(status_code=401, detail="Usuario inactivo")
-
-    return user
-
-
-# 👇 ENDPOINT 1: PARA TU APP/FRONTEND (Usa JSON)
 @router.post("/login", response_model=LoginResponse)
 def login_json(req: LoginRequest, db: Session = Depends(get_db)):
-    """
-    Login estándar para Frontend/App Móvil que envía JSON.
-    """
     user = _find_user(req.email, req.username, req.password, db)
     return _generate_login_response(user)
 
-
-# 👇 ENDPOINT 2: EXCLUSIVO PARA SWAGGER (Usa Formulario)
 @router.post("/swagger-login", response_model=LoginResponse, include_in_schema=False)
 def swagger_login_form(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    """
-    Endpoint oculto para que funcione el botón 'Authorize' de Swagger.
-    Swagger envía el email en el campo 'username'.
-    """
-    # Pasamos form_data.username como email, porque en el candado pones tu email ahí
-    user = _find_user(email=form_data.username, username=None, password=form_data.password, db=db)
+    user = _find_user(email=None, username=form_data.username, password=form_data.password, db=db)
     return _generate_login_response(user)
-
 
 @router.post("/sign-in", response_model=LoginResponse)
 def sign_in(req: LoginRequest, db: Session = Depends(get_db)):
     user = _find_user(req.email, req.username, req.password, db)
     return _generate_login_response(user)
-
 
 @router.post("/register", response_model=UserView)
 def register(cmd: RegisterCmd, db: Session = Depends(get_db)):
@@ -215,7 +209,7 @@ def register(cmd: RegisterCmd, db: Session = Depends(get_db)):
         username=username,
         password=hashed,
         hashed_password=hashed,
-        role="CLIENT",
+        role="ADMIN", # Cambiado a ADMIN para tu cuenta inicial
         is_superuser=False,
         balance=0.0,
         is_active=True,
@@ -226,26 +220,17 @@ def register(cmd: RegisterCmd, db: Session = Depends(get_db)):
     db.refresh(user)
     return user
 
-
-# ------------------ OAUTH (Google / Apple) ------------------ #
+# --- OAUTH ---
 
 def _oauth_login_or_register(email: str, name: Optional[str], db: Session) -> models.User:
     email = email.strip().lower()
     user = db.query(models.User).filter(models.User.email == email).first()
-
     if not user:
-        if email == SUPERUSER_EMAIL:
-            raise HTTPException(status_code=400, detail="Error de seguridad OAuth")
-
         base_name = email.split("@")[0]
-        username = email
-        if db.query(models.User).filter(models.User.username == username).first():
-            username = f"{base_name}_oauth"
-
         user = models.User(
             name=(name or "").strip() or base_name,
             email=email,
-            username=username,
+            username=email,
             password="",
             hashed_password="",
             role="CLIENT",
@@ -256,15 +241,12 @@ def _oauth_login_or_register(email: str, name: Optional[str], db: Session) -> mo
         db.add(user)
         db.commit()
         db.refresh(user)
-
     return user
-
 
 @router.post("/oauth/google", response_model=LoginResponse)
 def login_with_google(req: OAuthRequest, db: Session = Depends(get_db)):
     user = _oauth_login_or_register(req.email, req.name, db)
     return _generate_login_response(user)
-
 
 @router.post("/oauth/apple", response_model=LoginResponse)
 def login_with_apple(req: OAuthRequest, db: Session = Depends(get_db)):
