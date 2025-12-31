@@ -6,11 +6,11 @@ from app.api import (
     example,
     users,
     auth,
-    products, 
+    products,
     categories,
     customers,
     wallet,
-    payment_methods, 
+    payment_methods,
     marketing,
     recharges,
     licenses,
@@ -34,23 +34,31 @@ from app.api import (
     danlipagos,
     reports,
     withdrawals,
-    announcements, 
+    announcements,
 )
-from app.core.database import init_db 
+from app.core.database import init_db
 
 # ----------- 1. CREAR LA APP FASTAPI -----------
 
 app = FastAPI(title="Backend Motostore en Python")
 
-# ----------- 2. MIDDLEWARE (CORS) CORREGIDO PARA VERCEL -----------
+# ----------- 2. MIDDLEWARE (CORS) CORRECTO PARA PRODUCCIÓN -----------
 
-# Se permite "*" para evitar bloqueos de seguridad entre dominios
+origins = [
+    "https://motostorellc.com",
+    "https://www.motostorellc.com",
+    "https://motostore-final.vercel.app",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
-    allow_credentials=True,
+    allow_origins=origins,          # ✅ NO usar "*"
+    allow_credentials=True,         # ✅ permitido
     allow_methods=["*"],
     allow_headers=["*"],
+    max_age=600,
 )
 
 # ----------- 3. EVENTO DE ARRANQUE -----------
@@ -78,8 +86,8 @@ app.include_router(orders.router, prefix="/api/v1/orders", tags=["orders"])
 
 app.include_router(wallet.router, prefix="/api/v1/wallet", tags=["wallet"])
 app.include_router(payment_methods.router, prefix="/api/v1/payment-methods", tags=["wallet"])
-app.include_router(reports.router, prefix="/api/v1/reports", tags=["reports"])            
-app.include_router(withdrawals.router, prefix="/api/v1/withdrawals", tags=["admin"])    
+app.include_router(reports.router, prefix="/api/v1/reports", tags=["reports"])
+app.include_router(withdrawals.router, prefix="/api/v1/withdrawals", tags=["admin"])
 
 app.include_router(admin_users.router, prefix="/api/v1/admin/users", tags=["admin"])
 app.include_router(social.router, prefix="/api/v1/social", tags=["social"])
@@ -105,7 +113,6 @@ app.include_router(danlipagos.router, prefix="/api/v1", tags=["danlipagos"])
 @app.get("/")
 def root():
     return {"status": "ok", "message": "Backend COMPLETO en Python listo 🚀"}
-
 
 
 
