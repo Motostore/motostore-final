@@ -1,19 +1,13 @@
 # app/api/recharges.py
 #
-# Recharges conectadas a DB.
-# Basado en RechargeController.java (@RequestMapping("/api/v1/recharge"))
+# Recharges conectadas a DB y a la Tesorería (Exchange).
 #
-# Endpoints (con prefix="/api/v1" en main.py):
-#   GET    /recharge
-#   GET    /recharge/{id}
-#   POST   /recharge
-#   PUT    /recharge/{id}
-#   DELETE /recharge/{id}
-#
-#   GET    /recharges        (alias para frontend)
-#   GET    /recharges/all    (alias para frontend)
+# Endpoints:
+#   GET    /api/v1/recharge
+#   POST   /api/v1/recharge
+#   GET    /api/v1/recharge/calculate?amount=10&currency=COP  <-- NUEVO (Calculadora)
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -22,6 +16,9 @@ from sqlalchemy import func
 
 from app.core.database import get_db
 from app import models
+
+# 1. IMPORTAMOS LA CONEXIÓN CON TESORERÍA (Exchange)
+from app.api.exchange import get_dynamic_rates_dict
 
 router = APIRouter()
 
@@ -33,20 +30,27 @@ class RechargeBase(BaseModel):
     amount: float
     active: bool = True
 
-
 class RechargeCreate(RechargeBase):
     pass
-
 
 class RechargeUpdate(RechargeBase):
     pass
 
-
 class RechargeView(RechargeBase):
     id: int
+    
+    # Campo extra para mostrar precio local (opcional)
+    local_price_estimated: Optional[str] = None 
 
     class Config:
         from_attributes = True
+
+# Esquema para la respuesta de la calculadora
+class CalculatorResponse(BaseModel):
+    amount_usd: float
+    currency_requested: str
+    rate_used: float
+    local_amount: float
 
 
 def build_page(
@@ -81,7 +85,7 @@ def get_all_recharge(
     db: Session = Depends(get_db),
 ):
     """
-    GET /api/v1/recharge
+    Obtiene todas las opciones de recarga.
     """
     q = db.query(models.Recharge)
 
@@ -101,11 +105,48 @@ def get_all_recharge(
     return build_page(items, page, elements, total)
 
 
+# ---------- 2. NUEVA CALCULADORA AUTOMÁTICA (EL CEREBRO) ---------- #
+@router.get("/recharge/calculate", response_model=CalculatorResponse)
+def calculate_local_price(
+    amount_usd: float = Query(..., description="Monto en Dólares (ej: 10)"),
+    currency: str = Query(..., description="Moneda local (ej: COP, CLP, PEN, VES)")
+):
+    """
+    Calcula cuánto debe pagar el usuario en su moneda local
+    basado en las tasas actuales de Tesorería.
+    
+    Uso: /api/v1/recharge/calculate?amount=10&currency=COP
+    """
+    # A. Leemos las tasas de Tesorería (El archivo JSON)
+    rates = get_dynamic_rates_dict()
+    
+    # B. Buscamos la tasa (Si no existe, usamos 1.0)
+    code = currency.upper().strip()
+    rate = rates.get(code, 0)
+    
+    if rate == 0:
+        # Si no encuentra la moneda, asumimos USD 1:1 o lanzamos error
+        rate = 1.0
+        
+    # C. Hacemos la matemática (USD * Tasa)
+    local_amount = amount_usd * rate
+    
+    # Redondeamos según la moneda (COP/CLP sin decimales, el resto con 2)
+    if code in ['COP', 'CLP', 'VES']:
+         local_amount = round(local_amount, 2)
+    else:
+         local_amount = round(local_amount, 2)
+
+    return CalculatorResponse(
+        amount_usd=amount_usd,
+        currency_requested=code,
+        rate_used=rate,
+        local_amount=local_amount
+    )
+
+
 @router.get("/recharge/{id}", response_model=RechargeView)
 def get_recharge_by_id(id: int, db: Session = Depends(get_db)):
-    """
-    GET /api/v1/recharge/{id}
-    """
     obj = db.query(models.Recharge).filter(models.Recharge.id == id).first()
     if not obj:
         raise HTTPException(status_code=404, detail="Recarga no encontrada")
@@ -114,9 +155,6 @@ def get_recharge_by_id(id: int, db: Session = Depends(get_db)):
 
 @router.post("/recharge", response_model=RechargeView)
 def create_recharge(body: RechargeCreate, db: Session = Depends(get_db)):
-    """
-    POST /api/v1/recharge
-    """
     obj = models.Recharge(
         name=body.name,
         amount=body.amount,
@@ -134,9 +172,6 @@ def update_recharge(
     body: RechargeUpdate,
     db: Session = Depends(get_db),
 ):
-    """
-    PUT /api/v1/recharge/{id}
-    """
     obj = db.query(models.Recharge).filter(models.Recharge.id == id).first()
     if not obj:
         raise HTTPException(status_code=404, detail="Recarga no encontrada")
@@ -152,9 +187,6 @@ def update_recharge(
 
 @router.delete("/recharge/{id}")
 def delete_recharge(id: int, db: Session = Depends(get_db)):
-    """
-    DELETE /api/v1/recharge/{id}
-    """
     obj = db.query(models.Recharge).filter(models.Recharge.id == id).first()
     if not obj:
         raise HTTPException(status_code=404, detail="Recarga no encontrada")
@@ -164,7 +196,7 @@ def delete_recharge(id: int, db: Session = Depends(get_db)):
     return {"detail": "Recarga eliminada correctamente"}
 
 
-# ---------- ALIAS PARA EL FRONTEND: /recharges ---------- #
+# ---------- ALIAS PARA EL FRONTEND ---------- #
 
 @router.get("/recharges")
 def get_all_recharges_alias(
@@ -173,10 +205,6 @@ def get_all_recharges_alias(
     elements: int = Query(10, ge=1),
     db: Session = Depends(get_db),
 ):
-    """
-    GET /api/v1/recharges
-    Alias de /recharge
-    """
     return get_all_recharge(query=query, page=page, elements=elements, db=db)
 
 
@@ -185,18 +213,13 @@ def get_all_recharges_all_alias(
     query: str = Query("", description="texto de búsqueda"),
     db: Session = Depends(get_db),
 ):
-    """
-    GET /api/v1/recharges/all
-    """
     q = db.query(models.Recharge)
-
     if query:
         like = f"%{query}%"
         q = q.filter(models.Recharge.name.ilike(like))
-
     items = q.order_by(models.Recharge.id.desc()).all()
+    
+    # Opcional: Podríamos inyectar precios estimados aquí si quisiéramos
     total = len(items)
     return build_page(items, page=0, elements=total if total > 0 else 10, total=total)
-
-
 

@@ -9,10 +9,10 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app import models
-
-# 👇 IMPORTANTE: Importamos la seguridad para saber quién está logueado
-# Asegúrate de que esta ruta sea correcta en tu proyecto (usualmente app.api.auth o app.core.security)
 from app.api.auth import get_current_user 
+
+# 🟢 1. IMPORTAMOS LA TESORERÍA PARA CONOCER LAS TASAS DEL DÍA
+from app.api.exchange import get_dynamic_rates_dict
 
 router = APIRouter()
 
@@ -47,23 +47,51 @@ def _load_report_or_404(db: Session, payment_id: int) -> models.PaymentReport:
         raise HTTPException(status_code=404, detail="Pago reportado no encontrado")
     return report
 
+# 🟢 ESTA ES LA FUNCIÓN QUE MODIFICAMOS (La Calculadora)
 def _apply_wallet_deposit_from_report(db: Session, report: models.PaymentReport):
     user = db.query(models.User).filter(models.User.id == report.user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
+    # A. OBTENEMOS LAS TASAS ACTUALES
+    rates = get_dynamic_rates_dict()
+    
+    # B. DETECTAMOS LA MONEDA (Asumimos que el 'method' es COP, CLP, PEN o USD)
+    # Limpiamos el texto por si viene con espacios (ej: " COP ")
+    currency_code = report.method.upper().strip() 
+    
+    # C. BUSCAMOS LA TASA (Si no existe, usamos 1.0)
+    tasa = rates.get(currency_code, 1.0)
+    
+    # D. HACEMOS LA CONVERSIÓN (MATEMÁTICA PURA)
+    # Si reportaron 100.000 COP y la tasa es 4.100 -> 100.000 / 4.100 = 24.39 USD
+    monto_final_usd = report.amount
+    
+    if tasa > 1.0:
+        monto_final_usd = report.amount / tasa
+    
+    # Redondeamos a 2 decimales (Dinero real)
+    monto_final_usd = round(monto_final_usd, 2)
+
+    # E. CARGAMOS EL SALDO AL USUARIO
     if user.balance is None:
         user.balance = 0.0
 
-    user.balance += report.amount
+    user.balance += monto_final_usd
     db.commit()
     db.refresh(user)
 
+    # F. CREAMOS EL REGISTRO EN EL HISTORIAL (WALLET)
+    # Nota inteligente: Guardamos la evidencia de la conversión
+    nota_transaccion = f"Recarga Aprobada (#{report.id})"
+    if tasa > 1.0:
+        nota_transaccion += f" [{report.amount} {currency_code} @ {tasa} = {monto_final_usd} USD]"
+
     tx = models.WalletTransaction(
         user_id=user.id,
-        amount=report.amount,
+        amount=monto_final_usd, # <-- AQUÍ GUARDAMOS DÓLARES
         type="DEPOSIT",
-        note=f"Recarga aprobada (Reporte #{report.id})",
+        note=nota_transaccion,
     )
     db.add(tx)
     db.commit()
@@ -73,38 +101,32 @@ def _apply_wallet_deposit_from_report(db: Session, report: models.PaymentReport)
 
 @router.post("", response_model=PaymentReportRead)
 def report_payment(
-    method: str = Form(...),
+    method: str = Form(..., description="Moneda de pago: COP, CLP, PEN, VES, USD"), # Exigimos el código de moneda
     amount: float = Form(...),
     note: Optional[str] = Form(None),
     proof_url: Optional[UploadFile] = File(None, alias="proof_url"),
     db: Session = Depends(get_db),
-    # Opcional: Si quieres forzar que el usuario esté logueado para reportar, descomenta la siguiente línea:
     current_user: models.User = Depends(get_current_user)
 ):
     """
     Crea un reporte de pago.
+    IMPORTANTE: En 'method' el Frontend debe enviar la moneda (COP, CLP, PEN).
     """
-    # Usamos el ID del usuario logueado. 
-    # Si quieres permitir reportes anónimos (no recomendado), usa un ID fijo o maneja la excepción.
     user_id = current_user.id 
     
     # Manejo del Archivo
     file_location = None
     if proof_url:
-        # Crea carpeta uploads si no existe
         os.makedirs("uploads", exist_ok=True)
-        
-        # Nombre único para evitar sobrescribir
         filename = f"pay_{user_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}_{proof_url.filename}"
         file_location = f"uploads/{filename}"
-        
         with open(file_location, "wb") as buffer:
             shutil.copyfileobj(proof_url.file, buffer)
 
     report = models.PaymentReport(
         user_id=user_id,
         amount=amount,
-        method=method,
+        method=method.upper(), # Guardamos siempre en mayúsculas (COP, CLP...)
         proof_url=file_location,
         note=note,
         status="PENDING",
@@ -119,16 +141,13 @@ def report_payment(
 def list_all_reports(
     status: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user) # 🔒 Requiere Login
+    current_user: models.User = Depends(get_current_user)
 ):
     """
     Lista los reportes.
-    - Si es ADMIN/SUPERUSER: Ve todos.
-    - Si es CLIENTE: Solo ve los suyos.
     """
     query = db.query(models.PaymentReport)
 
-    # Si NO es admin, filtramos solo sus pagos
     if current_user.role not in ["SUPERUSER", "ADMIN"]:
         query = query.filter(models.PaymentReport.user_id == current_user.id)
     
@@ -144,12 +163,11 @@ def list_all_reports(
 def approve_report(
     payment_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user) # 1. Identificar quién llama
+    current_user: models.User = Depends(get_current_user)
 ):
     """
-    Aprueba un pago y carga saldo. SOLO SUPERUSER O ADMIN.
+    Aprueba un pago y carga saldo CONVERTIDO A DÓLARES.
     """
-    # 2. Verificar Permisos
     if current_user.role not in ["SUPERUSER", "ADMIN"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, 
@@ -163,12 +181,12 @@ def approve_report(
 
     report.status = "APPROVED"
     report.approved_at = datetime.utcnow()
-    report.approved_by = current_user.id # 3. Guardar quién aprobó realmente
+    report.approved_by = current_user.id
 
     db.commit()
     db.refresh(report)
 
-    # Cargar saldo a la wallet
+    # 🟢 AQUÍ OCURRE LA CONVERSIÓN Y DEPOSITO
     _apply_wallet_deposit_from_report(db, report)
 
     return report
@@ -178,12 +196,11 @@ def approve_report(
 def reject_report(
     payment_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user) # 1. Identificar quién llama
+    current_user: models.User = Depends(get_current_user)
 ):
     """
-    Rechaza un pago. SOLO SUPERUSER O ADMIN.
+    Rechaza un pago.
     """
-    # 2. Verificar Permisos
     if current_user.role not in ["SUPERUSER", "ADMIN"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, 
@@ -197,12 +214,9 @@ def reject_report(
 
     report.status = "REJECTED"
     report.rejected_at = datetime.utcnow()
-    report.rejected_by = current_user.id # 3. Guardar quién rechazó
+    report.rejected_by = current_user.id
 
     db.commit()
     db.refresh(report)
 
     return report
-
-
-
