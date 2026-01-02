@@ -2,7 +2,7 @@ import os
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Form
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -21,8 +21,8 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 300  # 5 horas
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# Apuntamos el Swagger a un endpoint especial que acepta formularios
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/swagger-login")
+# Apuntamos el Swagger al endpoint estándar de OAuth2
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login/access-token")
 
 SUPERUSER_USERNAME = "superuser"
 SUPERUSER_EMAIL = "superuser@motostore.test"
@@ -128,17 +128,20 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 def _find_user(email: Optional[str], username: Optional[str], password: str, db: Session) -> models.User:
     user = None
     
-    # 1. Buscar por email si se proporciona
+    # Limpieza de datos
+    email = email.strip().lower() if email else None
+    username = username.strip() if username else None
+
+    # 1. Estrategia inteligente: El campo 'username' puede traer un email
+    if username and "@" in username:
+        email = username.lower()
+    
+    # 2. Búsqueda
     if email:
-        user = db.query(models.User).filter(models.User.email == email.strip().lower()).first()
+        user = db.query(models.User).filter(models.User.email == email).first()
     
-    # 2. Si no se encontró o no había email, buscar por username
     if not user and username:
-        user = db.query(models.User).filter(models.User.username == username.strip()).first()
-    
-    # 3. COMPATIBILIDAD FRONTEND: Si mandaron el email en el campo de 'username'
-    if not user and username and "@" in username:
-        user = db.query(models.User).filter(models.User.email == username.strip().lower()).first()
+        user = db.query(models.User).filter(models.User.username == username).first()
 
     if not user:
         raise HTTPException(status_code=401, detail="Usuario no encontrado")
@@ -169,36 +172,51 @@ def _generate_login_response(user: models.User) -> LoginResponse:
 
 # ------------------ ENDPOINTS ------------------ #
 
+# 🟢 1. LOGIN OFICIAL (Form Data) - Este es el que usa NextAuth y Swagger
+@router.post("/login/access-token", response_model=LoginResponse)
+def login_access_token(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db)
+):
+    """
+    OAuth2 compatible token login, get an access token for future requests.
+    """
+    user = _find_user(email=None, username=form_data.username, password=form_data.password, db=db)
+    return _generate_login_response(user)
+
+
+# 🟢 2. LOGIN JSON (Para Postman o Apps móviles simples)
 @router.post("/login", response_model=LoginResponse)
 def login_json(req: LoginRequest, db: Session = Depends(get_db)):
     user = _find_user(req.email, req.username, req.password, db)
     return _generate_login_response(user)
 
-@router.post("/swagger-login", response_model=LoginResponse, include_in_schema=False)
-def swagger_login_form(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = _find_user(email=None, username=form_data.username, password=form_data.password, db=db)
-    return _generate_login_response(user)
 
-@router.post("/sign-in", response_model=LoginResponse)
-def sign_in(req: LoginRequest, db: Session = Depends(get_db)):
-    user = _find_user(req.email, req.username, req.password, db)
-    return _generate_login_response(user)
-
+# 🟢 3. REGISTRO DE SUPERUSUARIO (Para iniciar el sistema)
 @router.post("/register", response_model=UserView)
 def register(cmd: RegisterCmd, db: Session = Depends(get_db)):
     email = cmd.email.strip().lower()
     username = cmd.username.strip()
     name = (cmd.name or "").strip() or username
 
-    if username.lower() == SUPERUSER_USERNAME or email == SUPERUSER_EMAIL:
-        raise HTTPException(status_code=400, detail="Usuario reservado.")
-
+    # Verificar duplicados
     if db.query(models.User).filter(models.User.email == email).first():
         raise HTTPException(status_code=400, detail="El correo ya está registrado")
     if db.query(models.User).filter(models.User.username == username).first():
         raise HTTPException(status_code=400, detail="El usuario ya existe")
 
     hashed = get_password_hash(cmd.password)
+
+    # LÓGICA DE SUPERUSUARIO:
+    # Si la base de datos de usuarios está vacía, el primero que se registre es SUPERUSER
+    count_users = db.query(models.User).count()
+    is_first_user = (count_users == 0)
+
+    # Rol automático: Si es el primero -> SUPERUSER, si no -> CLIENT
+    role = "SUPERUSER" if is_first_user else "CLIENT"
+    
+    # NOTA JEFE: Si quieres forzar que ESTE registro sea admin, descomenta esto:
+    # role = "ADMIN" 
 
     user = models.User(
         name=name,
@@ -209,8 +227,8 @@ def register(cmd: RegisterCmd, db: Session = Depends(get_db)):
         username=username,
         password=hashed,
         hashed_password=hashed,
-        role="ADMIN", # Cambiado a ADMIN para tu cuenta inicial
-        is_superuser=False,
+        role=role, 
+        is_superuser=(role == "SUPERUSER"),
         balance=0.0,
         is_active=True,
     )
