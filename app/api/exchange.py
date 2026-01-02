@@ -20,7 +20,7 @@ class TreasuryConfig(BaseModel):
     rates: List[RateItem]
     profit: float
 
-# --- VALORES POR DEFECTO (Solo si falla la lectura) ---
+# --- VALORES POR DEFECTO ---
 DEFAULT_CONFIG = {
     "rates": [
         {"code": "VE", "rate": 54.00, "isManual": True, "label": "Tasa USDT"},
@@ -31,32 +31,38 @@ DEFAULT_CONFIG = {
     "profit": 5.00
 }
 
-# --- RUTAS ---
-
-@router.get("/config", response_model=TreasuryConfig)
-def get_config():
-    # Intentamos leer el archivo REAL
+# 🟢 ESTA ES LA FUNCIÓN QUE FALTA Y QUE ARREGLA EL ERROR ROJO
+def get_dynamic_rates_dict():
+    """Esta función lee el archivo JSON y le da los precios al sistema de recargas"""
     if os.path.exists(DB_FILE):
         try:
             with open(DB_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                print("✅ LECTURA EXITOSA DE JSON:", data) # Log para depurar
-                return data
-        except Exception as e:
-            print("❌ ERROR LEYENDO ARCHIVO:", e)
+                # Convertimos la lista de tasas en un diccionario fácil de leer
+                return {item['code']: item['rate'] for item in data['rates']}
+        except Exception:
+            pass
     
-    # Si no existe archivo, devolvemos default
-    print("⚠️ ARCHIVO NO EXISTE, USANDO DEFAULT")
+    # Si falla o no existe, usa los valores por defecto
+    return {item['code']: item['rate'] for item in DEFAULT_CONFIG['rates']}
+
+# --- RUTAS ---
+
+@router.get("/config", response_model=TreasuryConfig)
+def get_config():
+    if os.path.exists(DB_FILE):
+        try:
+            with open(DB_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
     return DEFAULT_CONFIG
 
 @router.post("/config")
 def save_config(config: TreasuryConfig):
     try:
-        # Forzamos la escritura
         with open(DB_FILE, "w", encoding="utf-8") as f:
             json.dump(config.dict(), f, indent=4)
-        print("💾 GUARDADO EXITOSO EN:", os.path.abspath(DB_FILE))
         return {"status": "ok", "message": "Guardado correctamente"}
     except Exception as e:
-        print("🔥 ERROR GUARDANDO:", e)
         raise HTTPException(status_code=500, detail=str(e))
