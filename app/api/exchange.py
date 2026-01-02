@@ -1,42 +1,48 @@
-# app/api/exchange.py
-#
-# Tasas de cambio simples (versión estática).
-#
-#   GET /api/v1/exchange
-#   GET /api/v1/exchange/convert?from=USD&to=VES&amount=100
-#
-# Más adelante, si quieres, esto se puede conectar a una API real.
-
-from typing import Dict
+import json
+import os
+from typing import Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 router = APIRouter()
 
-# ---------- Configuración estática de tasas ---------- #
-# base_currency: USD
-# rates: cuántas unidades de la otra moneda equivalen a 1 USD
-#
-# EJEMPLO:
-#   1 USD = 4000 COP  → "COP": 4000.0
+# ---------- SISTEMA DE PERSISTENCIA (JSON) ---------- #
+# Esto actuará como tu base de datos para las tasas
+DB_FILE = "rates_config.json"
 
-BASE_CURRENCY = "USD"
-
-RATES: Dict[str, float] = {
-    "USD": 1.0,
-    "COP": 4000.0,   # ejemplo
-    "VES": 40.0,     # ejemplo
-    "MXN": 17.0,     # ejemplo
-    "EUR": 0.9,      # ejemplo
+# Configuración por defecto (si el archivo no existe)
+DEFAULT_CONFIG = {
+    "rates": [
+        {"code": "VE", "rate": 54.00, "isManual": True, "label": "Tasa USDT"},
+        {"code": "CO", "rate": 4100.00, "isManual": False, "label": "Tasa COP"},
+        {"code": "PE", "rate": 3.80, "isManual": False, "label": "Tasa PEN"},
+        {"code": "CL", "rate": 980.00, "isManual": False, "label": "Tasa CLP"}
+    ],
+    "profit": 5.00
 }
 
+# Mapa para traducir Código de País (Frontend) a Moneda (Backend)
+COUNTRY_TO_CURRENCY = {
+    "VE": "VES",
+    "CO": "COP",
+    "PE": "PEN",
+    "CL": "CLP",
+    "US": "USD"
+}
 
-# ---------- Schemas ---------- #
+# ---------- MODELOS DE DATOS (Pydantic) ---------- #
 
-class ExchangeRatesView(BaseModel):
-    base: str = Field(..., description="Moneda base de las tasas")
-    rates: Dict[str, float] = Field(..., description="Tasas por moneda")
+# Modelo de cada item que envía el Frontend
+class RateItem(BaseModel):
+    code: str
+    rate: float
+    isManual: bool
+    label: Optional[str] = None
 
+# Modelo completo de la configuración
+class TreasuryConfig(BaseModel):
+    rates: List[RateItem]
+    profit: float
 
 class ConvertResult(BaseModel):
     from_currency: str
@@ -45,18 +51,69 @@ class ConvertResult(BaseModel):
     rate_used: float
     result: float
 
+# ---------- FUNCIONES DE CARGA Y GUARDADO ---------- #
 
-# ---------- Endpoints ---------- #
+def load_config() -> dict:
+    """Carga la configuración desde el archivo JSON o usa la default."""
+    if not os.path.exists(DB_FILE):
+        return DEFAULT_CONFIG
+    try:
+        with open(DB_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Error cargando DB: {e}")
+        return DEFAULT_CONFIG
 
-@router.get("", response_model=ExchangeRatesView)
-def get_rates():
+def save_config(data: TreasuryConfig):
+    """Guarda la configuración en el archivo JSON."""
+    with open(DB_FILE, "w", encoding="utf-8") as f:
+        json.dump(data.dict(), f, indent=4)
+
+def get_dynamic_rates_dict() -> Dict[str, float]:
     """
-    Devuelve las tasas configuradas de forma estática.
-
-    GET /api/v1/exchange
+    Convierte la lista del frontend en el diccionario simple
+    que usa tu sistema de conversión (ej: 'COP': 4100.0)
     """
-    return ExchangeRatesView(base=BASE_CURRENCY, rates=RATES)
+    config = load_config()
+    rates_map = {"USD": 1.0}
+    
+    for item in config.get("rates", []):
+        # Traducimos el código de país (CO) a moneda (COP)
+        currency_code = COUNTRY_TO_CURRENCY.get(item["code"], item["code"])
+        rates_map[currency_code] = float(item["rate"])
+    
+    return rates_map
 
+# ---------- ENDPOINTS PARA EL DASHBOARD (TESORERÍA) ---------- #
+
+@router.get("/config", response_model=TreasuryConfig)
+def get_treasury_config():
+    """
+    Endpoint que usa el Frontend (Next.js) para leer las tasas actuales
+    y pintarlas en el formulario.
+    """
+    data = load_config()
+    return data
+
+@router.post("/config")
+def update_treasury_config(config: TreasuryConfig):
+    """
+    Endpoint que usa el botón 'GUARDAR' del Frontend.
+    Escribe los cambios en el disco.
+    """
+    try:
+        save_config(config)
+        return {"status": "success", "message": "Tasas guardadas correctamente", "data": config}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------- ENDPOINTS DE CONVERSIÓN (SISTEMA ANTIGUO) ---------- #
+
+@router.get("", response_model=Dict[str, float])
+def get_simple_rates():
+    """Devuelve las tasas en formato simple para otros sistemas."""
+    return get_dynamic_rates_dict()
 
 @router.get("/convert", response_model=ConvertResult)
 def convert_currency(
@@ -65,33 +122,27 @@ def convert_currency(
     amount: float = Query(..., gt=0, description="Cantidad a convertir"),
 ):
     """
-    Convierte un monto entre dos monedas usando las tasas estáticas internas.
-
-    Convierte en 2 pasos:
-      - amount FROM -> USD
-      - USD -> TO
-
-    GET /api/v1/exchange/convert?from=USD&to=VES&amount=100
+    Convierte usando las tasas ACTUALIZADAS desde el archivo JSON.
     """
     f = from_currency.strip().upper()
     t = to_currency.strip().upper()
+    
+    # Cargamos las tasas frescas del archivo
+    current_rates = get_dynamic_rates_dict()
 
-    if f not in RATES:
+    if f not in current_rates:
         raise HTTPException(status_code=400, detail=f"Moneda origen no soportada: {f}")
-    if t not in RATES:
+    if t not in current_rates:
         raise HTTPException(status_code=400, detail=f"Moneda destino no soportada: {t}")
 
-    # 1) Pasar a USD
-    #    Si 1 USD = RATES[f] unidades de FROM,
-    #    entonces amount FROM = amount / RATES[f] USD
-    amount_in_usd = amount / RATES[f]
+    # Lógica de conversión
+    # 1. Pasar a USD
+    amount_in_usd = amount / current_rates[f]
 
-    # 2) De USD a TO
-    #    1 USD = RATES[t] unidades de TO
-    result_amount = amount_in_usd * RATES[t]
+    # 2. De USD a Destino
+    result_amount = amount_in_usd * current_rates[t]
 
-    # Tasa efectiva FROM -> TO
-    rate_from_to = RATES[t] / RATES[f]
+    rate_from_to = current_rates[t] / current_rates[f]
 
     return ConvertResult(
         from_currency=f,
@@ -100,4 +151,3 @@ def convert_currency(
         rate_used=rate_from_to,
         result=result_amount,
     )
-
