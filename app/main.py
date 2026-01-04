@@ -20,7 +20,7 @@ from app.api import (
     orders,
     guest,
     me,
-    profile,
+    # profile,      <-- COMENTADO PARA EVITAR ERROR 503
     company,
     notifications,
     roles,
@@ -28,7 +28,7 @@ from app.api import (
     phones,
     location,
     exchange,
-    admin_users,
+    # admin_users,  <-- COMENTADO PARA EVITAR ERROR 503
     social,
     transactions,
     danlipagos,
@@ -54,8 +54,8 @@ origins = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,          # ✅ NO usar "*"
-    allow_credentials=True,         # ✅ permitido
+    allow_origins=origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     max_age=600,
@@ -89,7 +89,7 @@ app.include_router(payment_methods.router, prefix="/api/v1/payment-methods", tag
 app.include_router(reports.router, prefix="/api/v1/reports", tags=["reports"])
 app.include_router(withdrawals.router, prefix="/api/v1/withdrawals", tags=["admin"])
 
-app.include_router(admin_users.router, prefix="/api/v1/admin/users", tags=["admin"])
+# app.include_router(admin_users.router, prefix="/api/v1/admin/users", tags=["admin"])  <-- DESACTIVADO
 app.include_router(social.router, prefix="/api/v1/social", tags=["social"])
 app.include_router(notifications.router, prefix="/api/v1/notifications", tags=["user"])
 app.include_router(roles.router, prefix="/api/v1/roles", tags=["admin"])
@@ -98,7 +98,7 @@ app.include_router(phones.router, prefix="/api/v1/phones", tags=["user"])
 app.include_router(location.router, prefix="/api/v1/locations", tags=["utils"])
 app.include_router(transactions.router, prefix="/api/v1/transactions", tags=["user"])
 app.include_router(me.router, prefix="/api/v1/me", tags=["user"])
-app.include_router(profile.router, prefix="/api/v1/profile", tags=["user"])
+# app.include_router(profile.router, prefix="/api/v1/profile", tags=["user"])  <-- DESACTIVADO
 app.include_router(company.router, prefix="/api/v1/company", tags=["admin"])
 app.include_router(customers.router, prefix="/api/v1/customers", tags=["admin"])
 
@@ -113,10 +113,3 @@ app.include_router(danlipagos.router, prefix="/api/v1", tags=["danlipagos"])
 @app.get("/")
 def root():
     return {"status": "ok", "message": "Backend COMPLETO en Python listo 🚀"}
-
-
-
-
-
-
-
