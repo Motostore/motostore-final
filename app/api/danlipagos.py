@@ -6,19 +6,36 @@ router = APIRouter()
 
 @router.get("/danlipagos/balance")
 async def get_danlipagos_balance():
-    # URL directa a la IP del proveedor
+    # URL y Datos
     url = "https://192.142.2.85/service/api"
-    # Tus credenciales reales
     params = {"key": "6286HWW0081794", "action": "saldos"}
 
-    async with httpx.AsyncClient() as client:
-        # verify=False es vital aquí porque estamos usando una IP directa
-        response = await client.get(url, params=params, verify=False)
+    print(f"--- INTENTANDO CONECTAR A DANLIPAGOS: {url} ---")
 
-    if response.status_code == 200:
-        data = response.json()
-        # Retornamos lo que el frontend necesita
-        return JSONResponse(content={"balance": data.get("balance", "0.00"), "currency": "VES"})
-    else:
-        print(f"Error Danlipagos: {response.status_code}")
-        return JSONResponse(content={"error": "Error al obtener el saldo"}, status_code=502)
+    try:
+        # TIMEOUT: Si tarda mas de 10 segundos, cortamos para no colgar el server
+        async with httpx.AsyncClient(verify=False, timeout=10.0) as client:
+            response = await client.get(url, params=params)
+        
+        # Imprimimos lo que respondieron para verlo en los logs si hace falta
+        print(f"--- RESPUESTA RECIBIDA: {response.status_code} ---")
+
+        if response.status_code == 200:
+            data = response.json()
+            # Verificamos si realmente llego el saldo
+            balance = data.get("balance", "0.00")
+            return JSONResponse(content={"balance": balance, "currency": "VES"})
+        else:
+            return JSONResponse(
+                content={"error": f"Proveedor respondio status {response.status_code}", "balance": "0.00"}, 
+                status_code=502
+            )
+
+    except httpx.ConnectTimeout:
+        print("--- ERROR: TIEMPO DE ESPERA AGOTADO (TIMEOUT) ---")
+        return JSONResponse(content={"error": "Timeout conectando al proveedor", "balance": "0.00"}, status_code=504)
+        
+    except Exception as e:
+        # AQUI CAPTURAMOS EL ERROR 500 PARA QUE NO EXPLOTE
+        print(f"--- ERROR GRAVE CONECTANDO: {str(e)} ---")
+        return JSONResponse(content={"error": str(e), "balance": "0.00"}, status_code=500)
