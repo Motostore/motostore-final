@@ -2,7 +2,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Importamos SOLO lo basico para que arranque si o si
-# Hemos quitado admin_users y profile de la lista para evitar errores
 from app.api import (
     example,
     users,
@@ -39,18 +38,11 @@ from app.core.database import init_db
 
 app = FastAPI(title="Backend Motostore")
 
-# Configuracion CORS
-origins = [
-    "https://motostorellc.com",
-    "https://www.motostorellc.com",
-    "https://motostore-final.vercel.app",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
-
+# --- CONFIGURACIÓN CORS BLINDADA (ABIERTA A TODOS) ---
+# Esto soluciona el error de "Sin Conexión" por bloqueo de seguridad
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],  # <--- AQUÍ ESTÁ LA MAGIA: Permitimos todo
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -65,7 +57,7 @@ def on_startup():
     except Exception as e:
         print(f"--- ERROR DB: {e}")
 
-# Rutas Activas (HEMOS QUITADO LAS CONFLICTIVAS)
+# Rutas Activas
 app.include_router(products.router, prefix="/api/v1/products", tags=["products"])
 app.include_router(categories.router, prefix="/api/v1/categories", tags=["products"])
 app.include_router(marketing.router, prefix="/api/v1/marketing", tags=["products"])
