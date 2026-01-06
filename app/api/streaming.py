@@ -1,18 +1,17 @@
 # app/api/streaming.py
 
-from typing import List, Optional
-from fastapi import APIRouter, Body, HTTPException
+from typing import List
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-import random
 import time
 
+# ⚠️ IMPORTANTE: Aquí NO ponemos prefix, porque ya lo pone el main.py
 router = APIRouter()
 
 # ==========================================
 # 1. MODELOS DE DATOS (Coinciden con React)
 # ==========================================
 
-# Lo que llega desde el Frontend al crear
 class StreamingProfileCreate(BaseModel):
     category: str       # Video, Musica, IPTV
     provider: str       # Netflix, Disney...
@@ -25,18 +24,17 @@ class StreamingProfileCreate(BaseModel):
     status: bool = True
     busy: bool = True
 
-# Lo que devolvemos al Frontend (incluye ID)
 class StreamingProfile(StreamingProfileCreate):
     id: int
 
 # ==========================================
 # 2. BASE DE DATOS EN MEMORIA (RAM)
 # ==========================================
-# ⚠️ ADVERTENCIA: Esta lista se borra si reinicias el servidor.
-# Para producción, aquí debes guardar en PostgreSQL/MySQL.
+# Esta lista se reinicia si apagas el servidor.
+# En producción real usarás PostgreSQL.
 _memory_db: List[StreamingProfile] = []
 
-# Datos de prueba iniciales para que no se vea vacío
+# Dato de prueba
 _memory_db.append(StreamingProfile(
     id=101, category="Video", provider="Netflix Demo", type="Perfil",
     user="demo@netflix.com", key="1234", dueDate="2025-12-31",
@@ -47,46 +45,40 @@ _memory_db.append(StreamingProfile(
 # 3. ENDPOINTS
 # ==========================================
 
-@router.get("/streaming")
+# 🔥 RUTA: GET /api/v1/streaming
+@router.get("/") 
 def get_all_streaming():
-    """
-    GET /api/v1/streaming
-    Devuelve la lista de cuentas para la tabla del Admin y Cliente.
-    """
-    # Devolvemos un objeto con "content" porque así lo espera tu frontend:
-    # setItems(res?.content ?? [])
     return {
         "content": _memory_db,
+        "totalPages": 1,
         "totalElements": len(_memory_db)
     }
 
-@router.post("/streaming")
+# 🔥 RUTA: POST /api/v1/streaming (La que usa el botón Guardar)
+@router.post("/")
 def create_streaming_profile(profile: StreamingProfileCreate):
-    """
-    POST /api/v1/streaming
-    Recibe los datos del formulario React y los guarda en la lista.
-    """
     try:
-        # 1. Generamos un ID único (simulado con timestamp)
+        # 1. Crear ID
         new_id = int(time.time() * 1000)
         
-        # 2. Creamos el objeto completo
+        # 2. Crear Objeto
         new_profile = StreamingProfile(id=new_id, **profile.dict())
         
-        # 3. Guardamos en la "Base de Datos" (Insertamos al principio)
+        # 3. Guardar al inicio de la lista
         _memory_db.insert(0, new_profile)
         
         print(f"✅ Guardado perfil: {new_profile.provider} - {new_profile.user}")
-        
-        # 4. Devolvemos el objeto creado (importante para que React actualice la UI)
         return new_profile
         
     except Exception as e:
         print(f"❌ Error al guardar: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- Endpoints Legacy (Opcionales, por si algo más los llama) ---
-
-@router.get("/streaming/providers")
-def get_providers_legacy():
-    return []
+# 🔥 RUTA: GET /api/v1/streaming/client (Para el panel de cliente)
+@router.get("/client")
+def get_client_streaming():
+    # Aquí en el futuro filtrarás por usuario: if item.user == current_user.email
+    return {
+        "content": _memory_db,
+        "totalPages": 1
+    }
