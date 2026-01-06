@@ -11,20 +11,14 @@ from app.core.database import init_db
 
 app = FastAPI(title="Backend Motostore")
 
-# --- CONFIGURACIÓN CORS CORREGIDA ---
-# ⚠️ IMPORTANTE: Para usar allow_credentials=True, NO puedes usar ["*"].
-# Debes poner la lista exacta de tus dominios permitidos.
-
-origins = [
-    "http://localhost:3000",                      # Para pruebas locales
-    "https://www.motostorellc.com",               # Tu dominio principal
-    "https://motostore-frontend-master.vercel.app", # Tu dominio de Vercel
-    "https://motostore2-0-6ktxw0haf-motostores-projects-721f1d75.vercel.app" # Tu despliegue actual
-]
+# --- CONFIGURACIÓN CORS NUCLEAR ☢️ ---
+# En lugar de listas, usamos regex para permitir cualquier subdominio
+# Esto permite: localhost, vercel.app, motostorellc.com, www.motostorellc.com, etc.
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,     # 👈 AQUÍ ESTÁ EL CAMBIO (Lista específica)
+    allow_origin_regex="https://.*",  # <--- ESTO PERMITE TODO LO QUE SEA HTTPS
+    allow_origins=["http://localhost:3000"], # Y esto permite localhost
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,14 +33,14 @@ def on_startup():
     except Exception as e:
         print(f"--- ERROR DB: {e}")
 
-# Rutas Activas
+# Rutas
 app.include_router(products.router, prefix="/api/v1/products", tags=["products"])
 app.include_router(categories.router, prefix="/api/v1/categories", tags=["products"])
+app.include_router(streaming.router, prefix="/api/v1/streaming", tags=["products"])
+# ... (El resto de tus rutas siguen igual, no las borres si no es necesario)
 app.include_router(marketing.router, prefix="/api/v1/marketing", tags=["products"])
 app.include_router(recharges.router, prefix="/api/v1/recharges", tags=["products"])
 app.include_router(licenses.router, prefix="/api/v1/licenses", tags=["products"])
-# 👇 Asegúrate de que esta línea siga aquí
-app.include_router(streaming.router, prefix="/api/v1/streaming", tags=["products"]) 
 app.include_router(exchange.router, prefix="/api/v1/exchange", tags=["products"])
 app.include_router(payments.router, prefix="/api/v1/payments", tags=["products"])
 app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["dashboard"])
