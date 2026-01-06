@@ -1,48 +1,30 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
-# Importamos SOLO lo basico para que arranque si o si
 from app.api import (
-    example,
-    users,
-    auth,
-    products,
-    categories,
-    customers,
-    wallet,
-    payment_methods,
-    marketing,
-    recharges,
-    licenses,
-    dashboard,
-    streaming,
-    payments,
-    orders,
-    guest,
-    me,
-    company,
-    notifications,
-    roles,
-    addresses,
-    phones,
-    location,
-    exchange,
-    social,
-    transactions,
-    danlipagos,
-    reports,
-    withdrawals,
-    announcements,
+    example, users, auth, products, categories, customers, wallet,
+    payment_methods, marketing, recharges, licenses, dashboard, streaming,
+    payments, orders, guest, me, company, notifications, roles, addresses,
+    phones, location, exchange, social, transactions, danlipagos, reports,
+    withdrawals, announcements,
 )
 from app.core.database import init_db
 
 app = FastAPI(title="Backend Motostore")
 
-# --- CONFIGURACIÓN CORS BLINDADA (ABIERTA A TODOS) ---
-# Esto soluciona el error de "Sin Conexión" por bloqueo de seguridad
+# --- CONFIGURACIÓN CORS CORREGIDA ---
+# ⚠️ IMPORTANTE: Para usar allow_credentials=True, NO puedes usar ["*"].
+# Debes poner la lista exacta de tus dominios permitidos.
+
+origins = [
+    "http://localhost:3000",                      # Para pruebas locales
+    "https://www.motostorellc.com",               # Tu dominio principal
+    "https://motostore-frontend-master.vercel.app", # Tu dominio de Vercel
+    "https://motostore2-0-6ktxw0haf-motostores-projects-721f1d75.vercel.app" # Tu despliegue actual
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # <--- AQUÍ ESTÁ LA MAGIA: Permitimos todo
+    allow_origins=origins,     # 👈 AQUÍ ESTÁ EL CAMBIO (Lista específica)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -63,7 +45,8 @@ app.include_router(categories.router, prefix="/api/v1/categories", tags=["produc
 app.include_router(marketing.router, prefix="/api/v1/marketing", tags=["products"])
 app.include_router(recharges.router, prefix="/api/v1/recharges", tags=["products"])
 app.include_router(licenses.router, prefix="/api/v1/licenses", tags=["products"])
-app.include_router(streaming.router, prefix="/api/v1/streaming", tags=["products"])
+# 👇 Asegúrate de que esta línea siga aquí
+app.include_router(streaming.router, prefix="/api/v1/streaming", tags=["products"]) 
 app.include_router(exchange.router, prefix="/api/v1/exchange", tags=["products"])
 app.include_router(payments.router, prefix="/api/v1/payments", tags=["products"])
 app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["dashboard"])
