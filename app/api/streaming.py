@@ -1,85 +1,92 @@
 # app/api/streaming.py
-#
-# Endpoints "fake" para streaming, para que el panel deje de mostrar 404.
-#
-# En los logs vimos llamadas tipo:
-#   /api/v1/streaming
-#   /api/v1/streaming/providers
-#   /api/v1/streaming_provider
-#
-# Aquí devolvemos datos en memoria (sin DB) suficientes para que el frontend pinte tablas/listas.
 
-from typing import List
-
-from fastapi import APIRouter
+from typing import List, Optional
+from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel
+import random
+import time
 
 router = APIRouter()
 
+# ==========================================
+# 1. MODELOS DE DATOS (Coinciden con React)
+# ==========================================
 
-# ---------- MODELOS Pydantic ---------- #
+# Lo que llega desde el Frontend al crear
+class StreamingProfileCreate(BaseModel):
+    category: str       # Video, Musica, IPTV
+    provider: str       # Netflix, Disney...
+    type: str           # Perfil, Cuenta Completa...
+    user: str           # Email
+    key: str            # Contraseña
+    dueDate: str        # Fecha
+    cost: float         # Precio compra
+    price: float        # Precio venta
+    status: bool = True
+    busy: bool = True
 
-class StreamingProvider(BaseModel):
+# Lo que devolvemos al Frontend (incluye ID)
+class StreamingProfile(StreamingProfileCreate):
     id: int
-    name: str
-    country: str
-    active: bool = True
 
+# ==========================================
+# 2. BASE DE DATOS EN MEMORIA (RAM)
+# ==========================================
+# ⚠️ ADVERTENCIA: Esta lista se borra si reinicias el servidor.
+# Para producción, aquí debes guardar en PostgreSQL/MySQL.
+_memory_db: List[StreamingProfile] = []
 
-class StreamingPlan(BaseModel):
-    id: int
-    provider_id: int
-    name: str
-    price: float
-    resolution: str  # "HD", "4K", etc.
-    screens: int
-    active: bool = True
+# Datos de prueba iniciales para que no se vea vacío
+_memory_db.append(StreamingProfile(
+    id=101, category="Video", provider="Netflix Demo", type="Perfil",
+    user="demo@netflix.com", key="1234", dueDate="2025-12-31",
+    cost=3.0, price=5.0, status=True, busy=True
+))
 
-
-# 🔹 Datos de ejemplo (en memoria, sin DB)
-
-_fake_providers: List[StreamingProvider] = [
-    StreamingProvider(id=1, name="Netflix", country="Global", active=True),
-    StreamingProvider(id=2, name="Disney+", country="Global", active=True),
-    StreamingProvider(id=3, name="HBO Max", country="Global", active=True),
-]
-
-_fake_plans: List[StreamingPlan] = [
-    StreamingPlan(id=1, provider_id=1, name="Básico", price=6.99, resolution="HD", screens=1, active=True),
-    StreamingPlan(id=2, provider_id=1, name="Estándar", price=10.99, resolution="Full HD", screens=2, active=True),
-    StreamingPlan(id=3, provider_id=2, name="Estándar Disney", price=9.99, resolution="HD", screens=4, active=True),
-]
-
-
-# ---------- ENDPOINTS ---------- #
+# ==========================================
+# 3. ENDPOINTS
+# ==========================================
 
 @router.get("/streaming")
 def get_all_streaming():
     """
     GET /api/v1/streaming
-
-    Podemos devolver un combo de providers + plans,
-    o solo planes según lo que el frontend espere.
-    Para simplificar devolvemos un objeto con ambos.
+    Devuelve la lista de cuentas para la tabla del Admin y Cliente.
     """
+    # Devolvemos un objeto con "content" porque así lo espera tu frontend:
+    # setItems(res?.content ?? [])
     return {
-        "providers": _fake_providers,
-        "plans": _fake_plans,
+        "content": _memory_db,
+        "totalElements": len(_memory_db)
     }
 
+@router.post("/streaming")
+def create_streaming_profile(profile: StreamingProfileCreate):
+    """
+    POST /api/v1/streaming
+    Recibe los datos del formulario React y los guarda en la lista.
+    """
+    try:
+        # 1. Generamos un ID único (simulado con timestamp)
+        new_id = int(time.time() * 1000)
+        
+        # 2. Creamos el objeto completo
+        new_profile = StreamingProfile(id=new_id, **profile.dict())
+        
+        # 3. Guardamos en la "Base de Datos" (Insertamos al principio)
+        _memory_db.insert(0, new_profile)
+        
+        print(f"✅ Guardado perfil: {new_profile.provider} - {new_profile.user}")
+        
+        # 4. Devolvemos el objeto creado (importante para que React actualice la UI)
+        return new_profile
+        
+    except Exception as e:
+        print(f"❌ Error al guardar: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/streaming/providers", response_model=List[StreamingProvider])
-def get_streaming_providers():
-    """
-    GET /api/v1/streaming/providers
-    """
-    return _fake_providers
+# --- Endpoints Legacy (Opcionales, por si algo más los llama) ---
 
-
-@router.get("/streaming_provider")
-def get_streaming_providers_alias():
-    """
-    GET /api/v1/streaming_provider
-    Alias por si el frontend usa esta ruta.
-    """
-    return _fake_providers
+@router.get("/streaming/providers")
+def get_providers_legacy():
+    return []
