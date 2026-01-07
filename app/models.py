@@ -10,7 +10,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.orm import relationship
-from app.core.database import Base  # Asegúrate que esta ruta coincida con tu proyecto
+from app.core.database import Base
 
 # ===================== CATEGORÍAS ===================== #
 
@@ -85,7 +85,7 @@ class LicenseProvider(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
-# ===================== USUARIOS ===================== #
+# ===================== USUARIOS (MODIFICADO) ===================== #
 
 class User(Base):
     __tablename__ = "users"
@@ -95,8 +95,6 @@ class User(Base):
     email = Column(String(255), unique=True, index=True, nullable=False)
     username = Column(String(100), unique=True, index=True, nullable=False)
 
-    # ⚠️ NOTA DE SEGURIDAD: Idealmente usamos solo hashed_password.
-    # Se mantiene 'password' si tu lógica actual lo requiere, pero debería eliminarse a futuro.
     password = Column(String(255), nullable=True) 
     hashed_password = Column(String(255), nullable=False)
 
@@ -109,7 +107,14 @@ class User(Base):
     cedula = Column(String(30), nullable=True)
     telefono = Column(String(30), nullable=True)
 
-    # Relaciones
+    # 🔥 NUEVO CAMPO: JERARQUÍA 🔥
+    # Esto permite saber quién es el "Jefe" de este usuario
+    parent_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    # Relación para acceder a los hijos (clientes) fácilmente
+    children = relationship("User", backref="parent", remote_side=[id])
+
+    # Relaciones existentes
     wallet_transactions = relationship("WalletTransaction", backref="user", lazy="select")
     orders = relationship("Order", backref="user", lazy="select")
 
@@ -160,7 +165,6 @@ class WalletTransaction(Base):
 
 
 # ===================== ORDERS (VENTAS) ===================== #
-# 🔥 MEJORADO: Agregado cost_amount para reportes de utilidad
 
 class Order(Base):
     __tablename__ = "orders"
@@ -168,10 +172,10 @@ class Order(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     
-    total_amount = Column(Float, nullable=False) # Precio de venta
-    cost_amount = Column(Float, default=0.0)     # Costo (Para calcular ganancia)
+    total_amount = Column(Float, nullable=False)
+    cost_amount = Column(Float, default=0.0)
     
-    status = Column(String(20), default="completed") # completed, pending, cancelled
+    status = Column(String(20), default="completed") 
     note = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -201,33 +205,26 @@ class PaymentReport(Base):
 # ===================== HELPERS ===================== #
 
 def create_default_superuser(db):
-    """
-    Crea un superusuario si la tabla está vacía.
-    NOTA: En producción, asegúrate de que el 'hashed_password' esté encriptado.
-    """
-    from sqlalchemy import select, func as sa_func
+    from sqlalchemy import select
 
-    # Verificamos si ya existen usuarios
     try:
         total = db.query(User).count()
         if total > 0:
             return
     except:
-        # Si la tabla no existe aún, pasamos
         return
 
-    # Creamos usuario Admin por defecto
-    # OJO: Aquí deberías usar tu función de hash real. Pongo el string directo por simplicidad.
     su = User(
         name="Dueño MotoStore",
         email="admin@motostore.com",
         username="admin_moto",
-        password="13101310",  # Solo referencia
-        hashed_password="$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxwKc.6qVictorJ0hN9qJ", # Hash de ejemplo
+        password="13101310",
+        hashed_password="$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxwKc.6qVictorJ0hN9qJ",
         is_superuser=True,
         role="SUPERUSER",
         is_active=True,
-        balance=1000000.0, # Saldo inicial para pruebas
+        balance=1000000.0,
+        parent_id=None # El Superuser no tiene jefe
     )
     db.add(su)
     db.commit()
