@@ -10,7 +10,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app import models  # Asegúrate de que models.User tenga el campo parent_id
+from app import models
 
 router = APIRouter()
 
@@ -23,11 +23,13 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login/access-token")
 
 # --- MODELOS DE DATOS (Schemas) ---
+
+# 🔥 CAMBIO 1: Username ahora es opcional para que no falle si el frontend no lo envía
 class RegisterCmd(BaseModel):
     name: str
     email: EmailStr
-    username: str
     password: str
+    username: Optional[str] = None  # <--- AHORA ES OPCIONAL
     cedula: Optional[str] = None
     telefono: Optional[str] = None
     full_name: Optional[str] = None
@@ -41,7 +43,7 @@ class UserView(BaseModel):
     is_superuser: bool
     balance: float
     is_active: Optional[bool] = True
-    parent_id: Optional[int] = None  # <--- IMPORTANTE: Para ver quién es su jefe
+    parent_id: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -128,37 +130,39 @@ def login_json(req: LoginRequest, db: Session = Depends(get_db)):
     user = _find_user(req.email, req.username, req.password, db)
     return _generate_response(user)
 
-# 🔥 EL REGISTRO QUE BUSCA AL JEFE 🔥
+# 🔥 REGISTRO BLINDADO (CORREGIDO) 🔥
 @router.post("/register", response_model=UserView)
 def register(cmd: RegisterCmd, db: Session = Depends(get_db)):
+    
+    # 🔥 CAMBIO 2: Generar username automático si no viene
+    if not cmd.username:
+        # Si el email es juan@gmail.com, el usuario será 'juan'
+        cmd.username = cmd.email.split("@")[0]
+
     # Validaciones
     if db.query(models.User).filter(models.User.email == cmd.email).first():
         raise HTTPException(status_code=400, detail="El email ya está registrado")
+    
+    # Verificar si el username existe, si existe le agregamos un número random
     if db.query(models.User).filter(models.User.username == cmd.username).first():
-        raise HTTPException(status_code=400, detail="El usuario ya existe")
+        import random
+        cmd.username = f"{cmd.username}{random.randint(100, 999)}"
 
     hashed = get_password_hash(cmd.password)
 
-    # Lógica de Jerarquía:
-    # 1. ¿Hay usuarios?
+    # Lógica de Jerarquía (Padre/Hijo)
     count = db.query(models.User).count()
-
     if count == 0:
-        # Si es el PRIMERO de la historia (Caso raro, porque ya existes tú)
         role = "SUPERUSER"
         is_superuser = True
         parent_id = None
     else:
-        # Si YA HAY alguien (Tu caso), el nuevo es CLIENTE
         role = "CLIENT"
         is_superuser = False
-        
-        # BUSCAMOS AL SUPERUSER (TÚ) PARA ASIGNARLO COMO PADRE
         boss = db.query(models.User).filter(models.User.role == "SUPERUSER").first()
         parent_id = boss.id if boss else None 
 
-    # Crear el usuario en BD
-    # ⚠️ OJO: Tu tabla 'users' en la base de datos DEBE tener la columna 'parent_id'
+    # Crear Usuario
     new_user = models.User(
         name=cmd.name,
         email=cmd.email,
@@ -167,7 +171,7 @@ def register(cmd: RegisterCmd, db: Session = Depends(get_db)):
         hashed_password=hashed,
         role=role,
         is_superuser=is_superuser,
-        parent_id=parent_id,  # <--- Aquí te lo asignamos
+        parent_id=parent_id,
         balance=0.0,
         is_active=True
     )
