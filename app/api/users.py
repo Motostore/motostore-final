@@ -8,7 +8,12 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app import models
 
-# ⚠️ TRUCO PARA EVITAR CRASH: No importamos auth aquí arriba
+# Intentamos importar el hasheador de contraseñas
+try:
+    from app.core.security import get_password_hash
+except ImportError:
+    get_password_hash = None
+
 router = APIRouter()
 
 # ---------- Esquemas ---------- #
@@ -21,11 +26,10 @@ class UserRead(BaseModel):
     role: str          
     is_superuser: bool
     balance: float
+    disabled: bool = False
     cedula: Optional[str] = None
     phone: Optional[str] = None
     telefono: Optional[str] = None 
-    
-    # 👇 NUEVOS CAMPOS PARA MONITOREO 👇
     ip_address: Optional[str] = None
     country_code: Optional[str] = None
     
@@ -39,16 +43,19 @@ class UserUpdate(BaseModel):
     telefono: Optional[str] = None
     cedula: Optional[str] = None
     dni: Optional[str] = None
+    role: Optional[str] = None      
+    disabled: Optional[bool] = None 
+    password: Optional[str] = None  
 
+class BalanceUpdate(BaseModel):
+    amount: float
 
 # ---------- Endpoints ---------- #
 
 @router.get("", response_model=List[UserRead])
 def get_all_users(db: Session = Depends(get_db)):
-    # Ordenamos por ID para que los nuevos salgan al final (o al principio si prefieres .desc())
     users = db.query(models.User).order_by(models.User.id.desc()).all()
     return users
-
 
 @router.get("/{user_id}", response_model=UserRead)
 def get_user(user_id: int, db: Session = Depends(get_db)):
@@ -57,71 +64,69 @@ def get_user(user_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     return user
 
+# 🔥 FIX: Agregamos respuesta JSON simple para evitar errores
+@router.post("/{user_id}/balance")
+def update_balance(user_id: int, data: BalanceUpdate, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    
+    user.balance += data.amount
+    db.commit()
+    db.refresh(user)
+    return {"message": "Saldo actualizado", "new_balance": user.balance}
 
-# 👇👇 LÓGICA DE ACTUALIZACIÓN BLINDADA 👇👇
-
-@router.put("/{user_id}") 
-def update_user(
+# 🔥 FIX: Agregamos response_model=UserRead para filtrar la respuesta y evitar crash
+@router.patch("/{user_id}", response_model=UserRead) 
+def patch_user(
     user_id: int, 
     user_in: UserUpdate, 
     db: Session = Depends(get_db),
 ):
-    """
-    PUT /api/v1/users/{user_id}
-    """
-    print(f"🚀 RECIBIDA PETICIÓN PUT PARA USER ID: {user_id}")
-    print(f"📦 DATOS: {user_in}")
+    print(f"🚀 PATCH USER: {user_id} | Datos: {user_in}")
 
-    # 1. IMPORTACIÓN LOCAL (Rompe el círculo vicioso)
-    try:
-        from app.api.auth import get_current_user
-    except ImportError as e:
-        print(f"❌ ERROR IMPORTANDO AUTH: {e}")
-        # No lanzamos error aquí para no romper la ejecución si solo falta una dependencia circular
-        pass
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
     try:
-        # 2. BUSCAR USUARIO
-        user = db.query(models.User).filter(models.User.id == user_id).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="Usuario no encontrado")
-
-        # 3. ACTUALIZAR CAMPOS
-        if user_in.name:
-            user.name = user_in.name
+        if user_in.name: user.name = user_in.name
+        if user_in.email: user.email = user_in.email
         
-        if user_in.email:
-             # Validación simple de duplicados
-            existing = db.query(models.User).filter(models.User.email == user_in.email).first()
-            if existing and existing.id != user_id:
-                 raise HTTPException(status_code=400, detail="Email ya registrado")
-            user.email = user_in.email
+        # ROL
+        if user_in.role:
+            user.role = user_in.role.upper()
+            if user.role == 'SUPERUSER':
+                user.is_superuser = True
+            else:
+                user.is_superuser = False
 
-        # Teléfono (Mapeo doble para compatibilidad)
+        # STATUS
+        if user_in.disabled is not None:
+            user.disabled = user_in.disabled
+
+        # PASSWORD
+        if user_in.password:
+            if get_password_hash:
+                user.hashed_password = get_password_hash(user_in.password)
+            else:
+                try:
+                    user.hashed_password = user_in.password 
+                except:
+                    user.password = user_in.password
+
+        # DATA EXTRA
         val_phone = user_in.phone or user_in.telefono
-        if val_phone:
-            user.phone = str(val_phone)
-            # user.telefono = str(val_phone) # Descomentar si existe esa columna en models.py
+        if val_phone: user.phone = str(val_phone)
 
-        # Cédula (Mapeo doble y limpieza)
         val_cedula = user_in.cedula or user_in.dni
-        if val_cedula:
-            try:
-                # Intenta limpiar y guardar
-                # Si tu columna es String en la BD, usa str(val_cedula) directamente
-                # Si es Integer, usa la limpieza:
-                # clean = ''.join(filter(str.isdigit, str(val_cedula)))
-                # if clean: user.cedula = int(clean)
-                
-                user.cedula = str(val_cedula) # Asumimos String para mayor seguridad
-            except:
-                pass
+        if val_cedula: user.cedula = str(val_cedula)
 
         db.commit()
         db.refresh(user)
-        print("✅ USUARIO ACTUALIZADO CON ÉXITO")
         return user
 
     except Exception as e:
-        print(f"🔥 ERROR CRÍTICO EN UPDATE_USER: {e}")
-        raise HTTPException(status_code=500, detail=f"Error del servidor: {str(e)}")
+        print(f"🔥 ERROR: {e}")
+        # Enviamos el error detallado al frontend
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
