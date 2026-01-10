@@ -1,7 +1,7 @@
 # app/api/me.py
 #
 # Perfil del usuario actual basado en JWT (Authorization: Bearer <token>)
-# - GET /api/v1/me              -> devuelve el usuario logueado
+# - GET /api/v1/me              -> devuelve el usuario logueado (DATOS FRESCOS)
 # - GET /api/v1/me?user_id=2    -> (solo SUPERUSER) devuelve el usuario indicado
 #
 from typing import Optional
@@ -19,7 +19,7 @@ router = APIRouter()
 
 class MeUserView(BaseModel):
     id: int
-    name: str
+    name: str = "Sin Nombre"
     email: EmailStr
     username: str
     role: str
@@ -45,14 +45,19 @@ def get_me(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    # ✅ si no piden user_id, devolver el usuario del token
+    # ✅ CASO 1: Si no piden user_id, devolvemos el usuario logueado PERO ACTUALIZADO
     if user_id is None:
-        return current_user
+        # 🔥 EL TRUCO: Consultamos la BD de nuevo para obtener el saldo real en este segundo
+        fresh_user = db.query(models.User).filter(models.User.id == current_user.id).first()
+        return fresh_user
 
-    # ✅ si piden otro user_id, solo permitir si es superuser
+    # ✅ CASO 2: Si piden otro user_id, solo permitir si es superuser
     if not getattr(current_user, "is_superuser", False):
-        return current_user
+        # Si no es admin, ignoramos el user_id y devolvemos su propio perfil actualizado
+        fresh_user = db.query(models.User).filter(models.User.id == current_user.id).first()
+        return fresh_user
 
+    # ✅ CASO 3: Es Superuser buscando a otro usuario
     user = db.query(models.User).filter(models.User.id == int(user_id)).first()
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
