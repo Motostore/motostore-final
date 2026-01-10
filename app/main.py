@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.database import init_db
 
-# 1. IMPORTACIONES (Traemos todos los archivos de tu carpeta api)
+# 1. IMPORTACIONES (Traemos todos los módulos)
 from app.api import (
     example, users, auth, products, categories, customers, wallet,
     payment_methods, marketing, recharges, licenses, dashboard, streaming,
@@ -13,13 +13,13 @@ from app.api import (
 
 app = FastAPI(title="Backend Motostore")
 
-# 2. CONFIGURACIÓN DE SEGURIDAD (CORS)
-# Permite que tu Frontend en Vercel se conecte sin bloqueos.
+# 2. CONFIGURACIÓN DE SEGURIDAD (CORS BLINDADO)
+# Listamos explícitamente los métodos para evitar bloqueos en PATCH
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
-    allow_credentials=False,
-    allow_methods=["*"],
+    allow_origins=["*"],  # Permite acceso desde cualquier lugar (Vercel, Localhost)
+    allow_credentials=False, # Debe ser False si usamos origins=["*"]
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"], # 🔥 PATCH EXPLÍCITO
     allow_headers=["*"],
     max_age=600,
 )
@@ -34,12 +34,12 @@ def on_startup():
         print(f"--- ERROR AL INICIAR DB: {e}")
 
 # ==================================================================
-# 4. CONEXIÓN DE RUTAS (ROUTERS) - AQUÍ ESTABA EL PROBLEMA
+# 4. CONEXIÓN DE RUTAS (ROUTERS)
 # ==================================================================
 
 # --- Usuarios y Autenticación ---
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
-app.include_router(users.router, prefix="/api/v1/users", tags=["users"])  # ✅ ESTA ERA LA QUE FALTABA
+app.include_router(users.router, prefix="/api/v1/users", tags=["users"]) 
 app.include_router(me.router, prefix="/api/v1/me", tags=["me"])
 app.include_router(roles.router, prefix="/api/v1/roles", tags=["roles"])
 app.include_router(admin_users.router, prefix="/api/v1/admin/users", tags=["admin_users"])
@@ -79,7 +79,7 @@ app.include_router(marketing.router, prefix="/api/v1/marketing", tags=["marketin
 app.include_router(guest.router, prefix="/api/v1/guest", tags=["guest"])
 app.include_router(example.router, prefix="/api/v1/example", tags=["example"])
 
-# Ruta de prueba para verificar que el servidor está vivo
+# Ruta de prueba
 @app.get("/")
 def root():
     return {"status": "ok", "message": "Backend Motostore Activo y Conectado 🚀"}
