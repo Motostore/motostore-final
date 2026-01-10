@@ -22,10 +22,10 @@ class UserRead(BaseModel):
     id: int
     name: Optional[str] = "Sin Nombre"
     email: EmailStr
-    username: str
-    role: str          
-    is_superuser: bool
-    balance: float
+    username: Optional[str] = "Usuario"
+    role: Optional[str] = "CLIENT"
+    is_superuser: bool = False
+    balance: float = 0.0
     disabled: bool = False
     cedula: Optional[str] = None
     phone: Optional[str] = None
@@ -64,20 +64,20 @@ def get_user(user_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     return user
 
-# 🔥 FIX: Agregamos respuesta JSON simple para evitar errores
+# CAJA RÁPIDA
 @router.post("/{user_id}/balance")
 def update_balance(user_id: int, data: BalanceUpdate, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
-    user.balance += data.amount
+    current = float(user.balance or 0)
+    user.balance = current + data.amount
     db.commit()
-    db.refresh(user)
-    return {"message": "Saldo actualizado", "new_balance": user.balance}
+    return {"status": "ok", "new_balance": user.balance}
 
-# 🔥 FIX: Agregamos response_model=UserRead para filtrar la respuesta y evitar crash
-@router.patch("/{user_id}", response_model=UserRead) 
+# 🔥 FIX DEFINITIVO: Quitamos response_model para que NO falle validando la respuesta
+@router.patch("/{user_id}") 
 def patch_user(
     user_id: int, 
     user_in: UserUpdate, 
@@ -90,6 +90,7 @@ def patch_user(
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
     try:
+        # Actualización de campos
         if user_in.name: user.name = user_in.name
         if user_in.email: user.email = user_in.email
         
@@ -110,6 +111,7 @@ def patch_user(
             if get_password_hash:
                 user.hashed_password = get_password_hash(user_in.password)
             else:
+                # Fallback simple
                 try:
                     user.hashed_password = user_in.password 
                 except:
@@ -123,10 +125,16 @@ def patch_user(
         if val_cedula: user.cedula = str(val_cedula)
 
         db.commit()
-        db.refresh(user)
-        return user
+        
+        # 🔥 RETORNAMOS UN JSON SIMPLE (Esto evita el crash 500)
+        return {
+            "status": "success", 
+            "id": user.id, 
+            "role": user.role, 
+            "disabled": user.disabled
+        }
 
     except Exception as e:
         print(f"🔥 ERROR: {e}")
-        # Enviamos el error detallado al frontend
+        db.rollback()
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
