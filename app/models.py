@@ -107,8 +107,10 @@ class User(Base):
     cedula = Column(String(30), nullable=True)
     telefono = Column(String(30), nullable=True)
 
+    # 🔥 NUEVO CAMPO: RASTREO DE IP 🔥
+    last_ip_address = Column(String(50), nullable=True)
+
     # 🔥 NUEVO CAMPO: JERARQUÍA 🔥
-    # Esto permite saber quién es el "Jefe" de este usuario
     parent_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     # Relación para acceder a los hijos (clientes) fácilmente
@@ -224,7 +226,7 @@ def create_default_superuser(db):
         role="SUPERUSER",
         is_active=True,
         balance=1000000.0,
-        parent_id=None # El Superuser no tiene jefe
+        parent_id=None
     )
     db.add(su)
     db.commit()
