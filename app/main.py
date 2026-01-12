@@ -13,13 +13,21 @@ from app.api import (
 
 app = FastAPI(title="Backend Motostore")
 
-# 2. CONFIGURACIÓN DE SEGURIDAD (CORS BLINDADO)
-# Listamos explícitamente los métodos para evitar bloqueos en PATCH
+# 2. CONFIGURACIÓN DE SEGURIDAD (CORS BLINDADO Y COMPATIBLE)
+# Definimos quién tiene permiso para entrar (Tu dominio real y localhost)
+origins = [
+    "http://localhost:3000",             # Tu computador
+    "https://www.motostorellc.com",      # Tu dominio con www
+    "https://motostorellc.com",          # Tu dominio sin www
+    "https://motostore-final.vercel.app",# Dominio técnico de Vercel
+    "*"                                  # Respaldo (aunque con credenciales se ignora)
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Permite acceso desde cualquier lugar (Vercel, Localhost)
-    allow_credentials=False, # Debe ser False si usamos origins=["*"]
-    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"], # 🔥 PATCH EXPLÍCITO
+    allow_origins=origins,  # 🔥 AQUÍ ESTÁ LA MAGIA: Usamos la lista de arriba
+    allow_credentials=True, # 🔥 CLAVE: Permitimos Cookies/Tokens
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["*"],
     max_age=600,
 )
