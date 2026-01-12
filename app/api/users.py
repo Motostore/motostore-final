@@ -27,10 +27,15 @@ class UserRead(BaseModel):
     is_superuser: bool = False
     balance: float = 0.0
     disabled: bool = False
+    
+    # Datos opcionales
     cedula: Optional[str] = None
     phone: Optional[str] = None
     telefono: Optional[str] = None 
-    ip_address: Optional[str] = None
+    
+    # 🔥 CORRECCIÓN CLAVE: Ahora el nombre coincide con la Base de Datos
+    last_ip_address: Optional[str] = None 
+    
     country_code: Optional[str] = None
     
     class Config:
@@ -54,6 +59,7 @@ class BalanceUpdate(BaseModel):
 
 @router.get("", response_model=List[UserRead])
 def get_all_users(db: Session = Depends(get_db)):
+    # Traemos todos los usuarios ordenados por ID
     users = db.query(models.User).order_by(models.User.id.desc()).all()
     return users
 
@@ -76,7 +82,7 @@ def update_balance(user_id: int, data: BalanceUpdate, db: Session = Depends(get_
     db.commit()
     return {"status": "ok", "new_balance": user.balance}
 
-# 🔥 FIX DEFINITIVO: Quitamos response_model para que NO falle validando la respuesta
+# PATCH USER (Actualizar datos)
 @router.patch("/{user_id}") 
 def patch_user(
     user_id: int, 
@@ -111,7 +117,6 @@ def patch_user(
             if get_password_hash:
                 user.hashed_password = get_password_hash(user_in.password)
             else:
-                # Fallback simple
                 try:
                     user.hashed_password = user_in.password 
                 except:
@@ -126,7 +131,6 @@ def patch_user(
 
         db.commit()
         
-        # 🔥 RETORNAMOS UN JSON SIMPLE (Esto evita el crash 500)
         return {
             "status": "success", 
             "id": user.id, 
