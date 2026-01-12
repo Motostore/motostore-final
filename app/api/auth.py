@@ -2,7 +2,8 @@ import os
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Depends, status
+# 🔥 AGREGAMOS "Request" AQUÍ PARA PODER LEER LA IP
+from fastapi import APIRouter, HTTPException, Depends, status, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -24,12 +25,11 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login/access-token")
 
 # --- MODELOS DE DATOS (Schemas) ---
 
-# 🔥 CAMBIO 1: Username ahora es opcional para que no falle si el frontend no lo envía
 class RegisterCmd(BaseModel):
     name: str
     email: EmailStr
     password: str
-    username: Optional[str] = None  # <--- AHORA ES OPCIONAL
+    username: Optional[str] = None
     cedula: Optional[str] = None
     telefono: Optional[str] = None
     full_name: Optional[str] = None
@@ -121,36 +121,62 @@ def _generate_response(user: models.User):
 # --- ENDPOINTS ---
 
 @router.post("/login/access-token", response_model=LoginResponse)
-def login_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+def login_access_token(
+    request: Request,  # <--- 🔥 AQUÍ RECIBIMOS LA INFORMACIÓN DE CONEXIÓN
+    form_data: OAuth2PasswordRequestForm = Depends(), 
+    db: Session = Depends(get_db)
+):
     user = _find_user(email=None, username=form_data.username, password=form_data.password, db=db)
+    
+    # 🔥 CAPTURA DE IP (Compatible con Render/Proxies) 🔥
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        # Si hay proxy, tomamos la primera IP real de la lista
+        ip = forwarded.split(",")[0]
+    else:
+        # Si es conexión directa, tomamos el host
+        ip = request.client.host if request.client else "Unknown"
+        
+    user.last_ip_address = ip  # Guardamos en el "balde"
+    db.commit()                # Cerramos el trato
+    
     return _generate_response(user)
 
 @router.post("/login", response_model=LoginResponse)
-def login_json(req: LoginRequest, db: Session = Depends(get_db)):
+def login_json(
+    request: Request,  # <--- 🔥 AQUÍ TAMBIÉN
+    req: LoginRequest, 
+    db: Session = Depends(get_db)
+):
     user = _find_user(req.email, req.username, req.password, db)
+    
+    # 🔥 CAPTURA DE IP (Compatible con Render/Proxies) 🔥
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        ip = forwarded.split(",")[0]
+    else:
+        ip = request.client.host if request.client else "Unknown"
+
+    user.last_ip_address = ip  # Guardamos en el "balde"
+    db.commit()                # Cerramos el trato
+
     return _generate_response(user)
 
-# 🔥 REGISTRO BLINDADO (CORREGIDO) 🔥
 @router.post("/register", response_model=UserView)
 def register(cmd: RegisterCmd, db: Session = Depends(get_db)):
     
-    # 🔥 CAMBIO 2: Generar username automático si no viene
     if not cmd.username:
-        # Si el email es juan@gmail.com, el usuario será 'juan'
         cmd.username = cmd.email.split("@")[0]
 
-    # Validaciones
     if db.query(models.User).filter(models.User.email == cmd.email).first():
         raise HTTPException(status_code=400, detail="El email ya está registrado")
     
-    # Verificar si el username existe, si existe le agregamos un número random
     if db.query(models.User).filter(models.User.username == cmd.username).first():
         import random
         cmd.username = f"{cmd.username}{random.randint(100, 999)}"
 
     hashed = get_password_hash(cmd.password)
 
-    # Lógica de Jerarquía (Padre/Hijo)
     count = db.query(models.User).count()
     if count == 0:
         role = "SUPERUSER"
@@ -162,7 +188,6 @@ def register(cmd: RegisterCmd, db: Session = Depends(get_db)):
         boss = db.query(models.User).filter(models.User.role == "SUPERUSER").first()
         parent_id = boss.id if boss else None 
 
-    # Crear Usuario
     new_user = models.User(
         name=cmd.name,
         email=cmd.email,
@@ -173,7 +198,8 @@ def register(cmd: RegisterCmd, db: Session = Depends(get_db)):
         is_superuser=is_superuser,
         parent_id=parent_id,
         balance=0.0,
-        is_active=True
+        is_active=True,
+        last_ip_address="---" # Por defecto al registrarse (se actualizará al primer login)
     )
     
     db.add(new_user)
