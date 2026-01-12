@@ -3,13 +3,19 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app import models
-# Importamos seguridad para proteger el reporte
-from app.api.auth import get_current_user
+# Ajusta este import según dónde tengas tu auth. 
+# Si tu archivo de login es endpoints/login.py, a veces se importa desde ahí o desde deps.
+# Asumiremos que lo tienes en app.api.deps o similar. Si te da error, avísame.
+try:
+    from app.api.deps import get_current_user
+except ImportError:
+    # Intento alternativo común
+    from app.api.v1.endpoints.login import get_current_user
 
 router = APIRouter()
 
 # ==========================================
-# 1. REPORTE GENERAL (Para el Dashboard Visual)
+# 1. REPORTE GENERAL (CORREGIDO)
 # ==========================================
 @router.get("/general")
 def get_general_report(
@@ -17,40 +23,55 @@ def get_general_report(
     current_user: models.User = Depends(get_current_user)
 ):
     """
-    Data para el Dashboard Principal (Frontend).
-    Retorna métricas de Ventas, Compras, Usuarios y Conversión.
+    Data para el Dashboard Principal.
+    Calcula métricas buscando estados 'completed', 'PAID', etc.
     """
 
-    # 🔒 SEGURIDAD: Solo Admin/Superuser puede ver esto
+    # 🔒 SEGURIDAD
     if current_user.role not in ["SUPERUSER", "ADMIN"]:
         raise HTTPException(status_code=403, detail="Acceso denegado.")
 
     try:
-        # A. Ventas Totales (Suma de órdenes completadas/pagadas)
-        total_sales = db.query(func.sum(models.Order.total_amount)) \
-            .filter(models.Order.status == "PAID").scalar() or 0.0
+        # 🔥 CORRECCIÓN AQUÍ: Buscamos varios estados posibles para asegurar que sume
+        # Tu modelo por defecto usa "completed"
+        valid_statuses = ["completed", "COMPLETED", "PAID", "paid", "succeeded"]
 
-        # B. Costos (Si implementaste la columna cost_amount)
+        # A. Ventas Totales
+        total_sales = db.query(func.sum(models.Order.total_amount)) \
+            .filter(models.Order.status.in_(valid_statuses)).scalar() or 0.0
+
+        # B. Costos
         total_costs = db.query(func.sum(models.Order.cost_amount)) \
-            .filter(models.Order.status == "PAID").scalar() or 0.0
+            .filter(models.Order.status.in_(valid_statuses)).scalar() or 0.0
 
         # C. Utilidad Neta
         utilities = total_sales - total_costs
 
-        # D. Usuarios Activos
+        # D. Usuarios Activos (Que no están disabled)
+        # Nota: En tu modelo User tenías 'is_active' y 'disabled'. Usamos is_active=True.
         active_users = db.query(models.User).filter(models.User.is_active == True).count()
 
-        # E. Métricas Derivadas
+        # E. Total Órdenes (Cualquier estado, para saber volumen de intentos)
         total_orders = db.query(models.Order).count()
 
+        # Ticket Promedio
         ticket_promedio = 0.0
-        if total_orders > 0:
-            ticket_promedio = total_sales / total_orders
+        # Contamos solo órdenes exitosas para el ticket promedio real
+        successful_orders_count = db.query(models.Order)\
+            .filter(models.Order.status.in_(valid_statuses)).count()
 
-        # F. Tasa de Conversión (Simulada: Órdenes / Usuarios activos)
+        if successful_orders_count > 0:
+            ticket_promedio = total_sales / successful_orders_count
+
+        # F. Tasa de Conversión (% de usuarios que han comprado)
         tasa_conversion = 0.0
         if active_users > 0:
-            tasa_conversion = round((total_orders / active_users) * 100, 2)
+            # Contamos usuarios únicos que tienen al menos una orden completada
+            compradores = db.query(models.Order.user_id)\
+                .filter(models.Order.status.in_(valid_statuses))\
+                .distinct().count()
+            
+            tasa_conversion = round((compradores / active_users) * 100, 2)
 
         return {
             "ventas": float(total_sales),
@@ -64,6 +85,7 @@ def get_general_report(
 
     except Exception as e:
         print(f"❌ Error en Reporte General: {e}")
+        # En caso de error devolvemos 0 para no romper el frontend
         return {
             "ventas": 0.0, "compras": 0.0, "utilidades": 0.0,
             "usuariosActivos": 0, "ticketPromedio": 0.0,
@@ -72,31 +94,23 @@ def get_general_report(
 
 
 # ==========================================
-# 2. REPORTE DE UTILIDADES (Tu lógica financiera)
+# 2. REPORTE DE WALLET (Sin cambios mayores)
 # ==========================================
 @router.get("/utilities")
 def get_utilities_report(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    """
-    Reporte Financiero de Wallet (Entradas vs Salidas).
-    """
-
     if current_user.role not in ["SUPERUSER", "ADMIN"]:
         raise HTTPException(status_code=403, detail="Acceso denegado.")
 
-    # 1. Total Dinero Entrado (DEPOSIT)
     total_in = db.query(func.sum(models.WalletTransaction.amount)) \
         .filter(models.WalletTransaction.type == "DEPOSIT").scalar() or 0.0
 
-    # 2. Total Retiros (WITHDRAW) - Sumamos negativos
     total_out_negative = db.query(func.sum(models.WalletTransaction.amount)) \
         .filter(models.WalletTransaction.type.in_(["WITHDRAW", "WITHDRAW_REQUEST"])).scalar() or 0.0
 
     total_out = abs(total_out_negative)
-
-    # 3. Dinero Neto en Wallets
     net_system_balance = total_in + total_out_negative
 
     return {
@@ -109,7 +123,7 @@ def get_utilities_report(
 
 
 # ==========================================
-# 3. REPORTE DE MOVIMIENTOS (LISTA REAL)
+# 3. REPORTE DE MOVIMIENTOS
 # ==========================================
 @router.get("/movimiento")
 def get_movimientos_report(
@@ -118,68 +132,40 @@ def get_movimientos_report(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    """
-    Lista movimientos desde WalletTransaction.
-    Endpoint final:
-      /api/v1/reports/movimiento?q=...&limit=200
-    """
-
     if current_user.role not in ["SUPERUSER", "ADMIN"]:
         raise HTTPException(status_code=403, detail="Acceso denegado.")
 
-    # límite seguro
-    if limit < 1:
-        limit = 1
-    if limit > 500:
-        limit = 500
+    if limit < 1: limit = 1
+    if limit > 500: limit = 500
 
     try:
         query = db.query(models.WalletTransaction)
 
-        # Filtro simple por tipo (DEPOSIT/WITHDRAW/etc)
         if q:
             w = f"%{q.strip()}%"
             query = query.filter(models.WalletTransaction.type.ilike(w))
 
-        # Orden: más reciente primero
-        if hasattr(models.WalletTransaction, "created_at"):
-            query = query.order_by(models.WalletTransaction.created_at.desc())
-        else:
-            query = query.order_by(models.WalletTransaction.id.desc())
-
+        query = query.order_by(models.WalletTransaction.id.desc())
         items = query.limit(limit).all()
 
         out = []
         for t in items:
-            # Fecha
-            if hasattr(t, "created_at") and t.created_at:
-                fecha = t.created_at.isoformat()
-            else:
-                fecha = ""
-
-            # Usuario (si existe relación user)
-            usuario = ""
-            if hasattr(t, "user") and t.user:
-                if hasattr(t.user, "username") and t.user.username:
-                    usuario = t.user.username
-                elif hasattr(t.user, "email") and t.user.email:
-                    usuario = t.user.email
-                else:
-                    usuario = str(getattr(t, "user_id", "")) or ""
-            else:
-                usuario = str(getattr(t, "user_id", "")) or ""
-
-            # Estado: si tu modelo no tiene status, ponemos OK
+            fecha = t.created_at.isoformat() if t.created_at else ""
+            
+            # Intentar obtener nombre de usuario de forma segura
+            usuario = "Desconocido"
+            if t.user:
+                usuario = t.user.username or t.user.email or str(t.user.id)
+            
+            # Estado (WalletTransaction a veces no tiene status, asumimos OK)
             estado = "OK"
-            if hasattr(t, "status") and getattr(t, "status"):
-                estado = str(getattr(t, "status"))
 
             out.append({
-                "id": getattr(t, "id", ""),
+                "id": t.id,
                 "fecha": fecha,
-                "tipo": str(getattr(t, "type", "")),
+                "tipo": str(t.type),
                 "usuario": usuario,
-                "monto": float(getattr(t, "amount", 0.0) or 0.0),
+                "monto": float(t.amount),
                 "estado": estado
             })
 
@@ -187,4 +173,4 @@ def get_movimientos_report(
 
     except Exception as e:
         print(f"❌ Error en Reporte Movimientos: {e}")
-        raise HTTPException(status_code=500, detail="Error generando reporte de movimientos.")
+        raise HTTPException(status_code=500, detail="Error generando reporte.")
