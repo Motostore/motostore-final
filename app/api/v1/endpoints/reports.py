@@ -4,15 +4,9 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app import models
 
-# Configuración de seguridad (Auth)
-try:
-    from app.api.deps import get_current_user
-except ImportError:
-    try:
-        from app.api.v1.endpoints.login import get_current_user
-    except ImportError:
-        def get_current_user():
-            raise HTTPException(500, "Error de configuracion de Auth")
+# --- IMPORTACIÓN CORREGIDA ---
+# Ahora apuntamos al archivo correcto que nos mostró el grep
+from app.api.auth import get_current_user
 
 router = APIRouter()
 
@@ -24,14 +18,12 @@ def get_general_report(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    # Verificación de Rol
     if hasattr(current_user, "role") and current_user.role not in ["SUPERUSER", "ADMIN"]:
         raise HTTPException(status_code=403, detail="Acceso denegado.")
 
     try:
         valid_statuses = ["completed", "COMPLETED", "PAID", "paid", "succeeded"]
 
-        # Consultas seguras con paréntesis
         total_sales = (
             db.query(func.sum(models.Order.total_amount))
             .filter(models.Order.status.in_(valid_statuses))
@@ -49,14 +41,14 @@ def get_general_report(
         total_orders = db.query(models.Order).count()
 
         ticket_promedio = 0.0
-        successful_orders = (
+        successful_orders_count = (
             db.query(models.Order)
             .filter(models.Order.status.in_(valid_statuses))
             .count()
         )
 
-        if successful_orders > 0:
-            ticket_promedio = total_sales / successful_orders
+        if successful_orders_count > 0:
+            ticket_promedio = total_sales / successful_orders_count
 
         tasa_conversion = 0.0
         if active_users > 0:
@@ -80,7 +72,6 @@ def get_general_report(
 
     except Exception as e:
         print(f"Error Reporte General: {e}")
-        # En caso de error, devolvemos ceros para no romper el Frontend
         return {
             "ventas": 0.0, "compras": 0.0, "utilidades": 0.0,
             "usuariosActivos": 0, "ticketPromedio": 0.0,
@@ -99,7 +90,6 @@ def get_utilities_report(
         raise HTTPException(status_code=403, detail="Acceso denegado.")
 
     try:
-        # Intentamos calcular, pero si falla (ej: no existe tabla Wallet), capturamos el error
         total_in = (
             db.query(func.sum(models.WalletTransaction.amount))
             .filter(models.WalletTransaction.type == "DEPOSIT")
@@ -123,8 +113,7 @@ def get_utilities_report(
         }
 
     except Exception as e:
-        # AQUI ESTA LA MAGIA: Si falla, imprimimos el error en el log pero respondemos con ceros.
-        print(f"Error Reporte Utilities: {e}") 
+        print(f"Error Reporte Utilities: {e}")
         return {
             "total_income": 0.0,
             "total_withdrawn": 0.0,
