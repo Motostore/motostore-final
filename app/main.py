@@ -2,31 +2,34 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.database import init_db
 
-# 1. IMPORTACIONES (Traemos todos los módulos)
+# 1. IMPORTACIONES
+# Quitamos 'reports' de esta lista para importarlo de forma segura abajo
 from app.api import (
     example, users, auth, products, categories, customers, wallet,
     payment_methods, marketing, recharges, licenses, dashboard, streaming,
     payments, orders, guest, me, company, notifications, roles, addresses,
-    phones, location, exchange, social, transactions, danlipagos, reports,
+    phones, location, exchange, social, transactions, danlipagos,
     withdrawals, announcements, admin_users, admin_products
 )
 
+# 🔥 IMPORTACIÓN DIRECTA Y SEGURA (Bypaseamos el __init__.py)
+from app.api.v1.endpoints import reports as reports_endpoint
+
 app = FastAPI(title="Backend Motostore")
 
-# 2. CONFIGURACIÓN DE SEGURIDAD (CORS BLINDADO Y COMPATIBLE)
-# Definimos quién tiene permiso para entrar (Tu dominio real y localhost)
+# 2. CONFIGURACIÓN DE SEGURIDAD
 origins = [
-    "http://localhost:3000",             # Tu computador
-    "https://www.motostorellc.com",      # Tu dominio con www
-    "https://motostorellc.com",          # Tu dominio sin www
-    "https://motostore-final.vercel.app",# Dominio técnico de Vercel
-    "*"                                  # Respaldo (aunque con credenciales se ignora)
+    "http://localhost:3000",
+    "https://www.motostorellc.com",
+    "https://motostorellc.com",
+    "https://motostore-final.vercel.app",
+    "*"
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,  # 🔥 AQUÍ ESTÁ LA MAGIA: Usamos la lista de arriba
-    allow_credentials=True, # 🔥 CLAVE: Permitimos Cookies/Tokens
+    allow_origins=origins,
+    allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["*"],
     max_age=600,
@@ -75,7 +78,10 @@ app.include_router(recharges.router, prefix="/api/v1/recharges", tags=["recharge
 
 # --- Sistema, Utilidades y Marketing ---
 app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["dashboard"])
-app.include_router(reports.router, prefix="/api/v1/reports", tags=["reports"])
+
+# 🔥 CONEXIÓN DE REPORTES (Usando la variable segura)
+app.include_router(reports_endpoint.router, prefix="/api/v1/reports", tags=["reports"])
+
 app.include_router(notifications.router, prefix="/api/v1/notifications", tags=["notifications"])
 app.include_router(announcements.router, prefix="/api/v1/announcements", tags=["announcements"])
 app.include_router(company.router, prefix="/api/v1/company", tags=["company"])
@@ -87,7 +93,6 @@ app.include_router(marketing.router, prefix="/api/v1/marketing", tags=["marketin
 app.include_router(guest.router, prefix="/api/v1/guest", tags=["guest"])
 app.include_router(example.router, prefix="/api/v1/example", tags=["example"])
 
-# Ruta de prueba
 @app.get("/")
 def root():
     return {"status": "ok", "message": "Backend Motostore Activo y Conectado 🚀"}
