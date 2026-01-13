@@ -3,9 +3,6 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app import models
-
-# --- IMPORTACIÓN CORREGIDA ---
-# Ahora apuntamos al archivo correcto que nos mostró el grep
 from app.api.auth import get_current_user
 
 router = APIRouter()
@@ -120,3 +117,31 @@ def get_utilities_report(
             "net_system_balance": 0.0,
             "currency": "USD"
         }
+
+# ==========================================
+# 3. REPORTE TRANSACCIONES (Movimientos)
+# ==========================================
+@router.get("/transactions")
+def get_transactions_report(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+    skip: int = 0,
+    limit: int = 50
+):
+    if hasattr(current_user, "role") and current_user.role not in ["SUPERUSER", "ADMIN"]:
+        raise HTTPException(status_code=403, detail="Acceso denegado.")
+
+    try:
+        # Buscamos las ultimas transacciones
+        transactions = (
+            db.query(models.WalletTransaction)
+            .order_by(models.WalletTransaction.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+        return transactions
+
+    except Exception as e:
+        print(f"Error Reporte Transacciones: {e}")
+        return []
