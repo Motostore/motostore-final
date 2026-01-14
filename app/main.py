@@ -3,7 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.database import init_db
 
 # 1. IMPORTACIONES
-# Quitamos 'reports' de esta lista para importarlo de forma segura abajo
 from app.api import (
     example, users, auth, products, categories, customers, wallet,
     payment_methods, marketing, recharges, licenses, dashboard, streaming,
@@ -12,8 +11,11 @@ from app.api import (
     withdrawals, announcements, admin_users, admin_products
 )
 
-# 🔥 IMPORTACIÓN DIRECTA Y SEGURA (Bypaseamos el __init__.py)
+# 🔥 IMPORTACIONES DIRECTAS Y SEGURAS (Bypaseamos el __init__.py)
+# Esto asegura que funcionen aunque no estén en la lista de arriba
 from app.api.v1.endpoints import reports as reports_endpoint
+from app.api.v1.endpoints import admin_providers # <--- ESTE FALTABA PARA LOS SALDOS
+from app.api.v1.endpoints import admin_stats     # <--- ESTE FALTABA PARA EL SUMMARY
 
 app = FastAPI(title="Backend Motostore")
 
@@ -79,11 +81,29 @@ app.include_router(recharges.router, prefix="/api/v1/recharges", tags=["recharge
 # --- Sistema, Utilidades y Marketing ---
 app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["dashboard"])
 
-# 🔥 CONEXIÓN DE REPORTES (Usando la variable segura)
+# 🔥 CONEXIÓN DE REPORTES Y ADMIN (SOLUCIÓN A LOS 404)
 app.include_router(reports_endpoint.router, prefix="/api/v1/reports", tags=["reports"])
 
-app.include_router(notifications.router, prefix="/api/v1/notifications", tags=["notifications"])
+# -- Conectamos los saldos de proveedores (Danli/Legion) --
+try:
+    app.include_router(admin_providers.router, prefix="/api/v1/admin/providers", tags=["admin_providers"])
+except Exception:
+    print("--- ADVERTENCIA: admin_providers no encontrado o con error ---")
+
+# -- Conectamos el resumen de estadísticas (Summary) --
+try:
+    app.include_router(admin_stats.router, prefix="/api/v1/admin/stats", tags=["admin_stats"])
+except Exception:
+    # Si no existe admin_stats, usamos el dashboard como fallback
+    app.include_router(dashboard.router, prefix="/api/v1/admin/stats", tags=["admin_stats_fallback"])
+
+# -- Alias para Anuncios (Para que funcionen las rutas viejas y nuevas) --
 app.include_router(announcements.router, prefix="/api/v1/announcements", tags=["announcements"])
+app.include_router(announcements.router, prefix="/api/v1/admin/announcement", tags=["announcements_legacy"])
+app.include_router(announcements.router, prefix="/api/v1/announcement-bar", tags=["announcement_bar"])
+
+
+app.include_router(notifications.router, prefix="/api/v1/notifications", tags=["notifications"])
 app.include_router(company.router, prefix="/api/v1/company", tags=["company"])
 app.include_router(location.router, prefix="/api/v1/location", tags=["location"])
 app.include_router(addresses.router, prefix="/api/v1/addresses", tags=["addresses"])
