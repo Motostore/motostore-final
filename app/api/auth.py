@@ -100,6 +100,20 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise HTTPException(status_code=400, detail="Usuario inactivo")
     return user
 
+# 🔥 ESTA ES LA FUNCIÓN QUE FALTABA Y CAUSABA EL ERROR 🔥
+def get_current_active_user(current_user: models.User = Depends(get_current_user)):
+    if not getattr(current_user, "is_active", True):
+        raise HTTPException(status_code=400, detail="Usuario inactivo")
+    # Convertimos el modelo SQLAlchemy a un diccionario para que 
+    # el código de Danlipagos/Marketing (que usa .get()) funcione bien.
+    return {
+        "id": current_user.id,
+        "username": current_user.username,
+        "email": current_user.email,
+        "role": current_user.role,
+        "is_superuser": current_user.is_superuser
+    }
+
 # --- LÓGICA DE BÚSQUEDA ---
 def _find_user(email: Optional[str], username: Optional[str], password: str, db: Session) -> models.User:
     user = None
@@ -122,43 +136,39 @@ def _generate_response(user: models.User):
 
 @router.post("/login/access-token", response_model=LoginResponse)
 def login_access_token(
-    request: Request,  # <--- 🔥 AQUÍ RECIBIMOS LA INFORMACIÓN DE CONEXIÓN
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(), 
     db: Session = Depends(get_db)
 ):
     user = _find_user(email=None, username=form_data.username, password=form_data.password, db=db)
     
-    # 🔥 CAPTURA DE IP (Compatible con Render/Proxies) 🔥
     forwarded = request.headers.get("X-Forwarded-For")
     if forwarded:
-        # Si hay proxy, tomamos la primera IP real de la lista
         ip = forwarded.split(",")[0]
     else:
-        # Si es conexión directa, tomamos el host
         ip = request.client.host if request.client else "Unknown"
         
-    user.last_ip_address = ip  # Guardamos en el "balde"
-    db.commit()                # Cerramos el trato
+    user.last_ip_address = ip
+    db.commit()
     
     return _generate_response(user)
 
 @router.post("/login", response_model=LoginResponse)
 def login_json(
-    request: Request,  # <--- 🔥 AQUÍ TAMBIÉN
+    request: Request,
     req: LoginRequest, 
     db: Session = Depends(get_db)
 ):
     user = _find_user(req.email, req.username, req.password, db)
     
-    # 🔥 CAPTURA DE IP (Compatible con Render/Proxies) 🔥
     forwarded = request.headers.get("X-Forwarded-For")
     if forwarded:
         ip = forwarded.split(",")[0]
     else:
         ip = request.client.host if request.client else "Unknown"
 
-    user.last_ip_address = ip  # Guardamos en el "balde"
-    db.commit()                # Cerramos el trato
+    user.last_ip_address = ip
+    db.commit()
 
     return _generate_response(user)
 
@@ -199,7 +209,7 @@ def register(cmd: RegisterCmd, db: Session = Depends(get_db)):
         parent_id=parent_id,
         balance=0.0,
         is_active=True,
-        last_ip_address="---" # Por defecto al registrarse (se actualizará al primer login)
+        last_ip_address="---" 
     )
     
     db.add(new_user)
