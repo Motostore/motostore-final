@@ -119,7 +119,7 @@ def get_utilities_report(
         }
 
 # ==========================================
-# 3. REPORTE TRANSACCIONES (Movimientos)
+# 3. REPORTE TRANSACCIONES
 # ==========================================
 @router.get("/transactions")
 def get_transactions_report(
@@ -132,7 +132,6 @@ def get_transactions_report(
         raise HTTPException(status_code=403, detail="Acceso denegado.")
 
     try:
-        # Buscamos las ultimas transacciones
         transactions = (
             db.query(models.WalletTransaction)
             .order_by(models.WalletTransaction.created_at.desc())
