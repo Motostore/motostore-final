@@ -1,74 +1,95 @@
 # app/api/dashboard.py
-#
-# Endpoints para el dashboard.
-# En el frontend están llamando:
-#   GET /api/v1/dashboard/announcements?role=SUPERUSER
-#
-# Aquí devolvemos una lista de anuncios "fake" (en memoria),
-# solo para que el panel cargue sin errores y muestre algo.
-
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
-router = APIRouter()
+# 🔥 CONEXIÓN CLAVE: Importamos la función para leer los datos reales
+try:
+    from app.api.announcements import load_announcement
+except ImportError:
+    # Fallback por si acaso hay problemas de importación circular
+    def load_announcement():
+        return {}
 
+router = APIRouter()
 
 class Announcement(BaseModel):
     id: int
     title: str
     message: str
     level: str  # INFO, WARNING, DANGER, SUCCESS
-    role: Optional[str] = None  # SUPERUSER / ADMIN / DISTRIBUTOR / CLIENT etc.
+    role: Optional[str] = None
     created_at: datetime
-
-
-# 🔹 Datos de ejemplo (no usan DB, solo memoria)
-_fake_announcements: List[Announcement] = [
-    Announcement(
-        id=1,
-        title="Bienvenido a Motostore Python",
-        message="Este es tu nuevo backend migrado a Python. 🎉",
-        level="INFO",
-        role=None,
-        created_at=datetime.utcnow() - timedelta(days=1),
-    ),
-    Announcement(
-        id=2,
-        title="Recargas activas",
-        message="Ya puedes gestionar productos de recarga, licencias y marketing desde el panel.",
-        level="SUCCESS",
-        role="SUPERUSER",
-        created_at=datetime.utcnow() - timedelta(hours=5),
-    ),
-    Announcement(
-        id=3,
-        title="Recordatorio de seguridad",
-        message="No compartas tu contraseña con nadie. Próximamente: login con tokens.",
-        level="WARNING",
-        role=None,
-        created_at=datetime.utcnow() - timedelta(hours=2),
-    ),
-]
-
 
 @router.get("/dashboard/announcements", response_model=List[Announcement])
 def get_dashboard_announcements(
     role: Optional[str] = Query(None, description="Rol del usuario (SUPERUSER, ADMIN, etc.)"),
 ):
     """
-    GET /api/v1/dashboard/announcements?role=SUPERUSER
-
-    Por ahora:
-    - Si llega role => filtramos anuncios específicos de ese rol + generales.
-    - Si no llega role => devolvemos todos.
+    GET /api/v1/dashboard/announcements
+    Devuelve los anuncios reales gestionados desde el panel de administración.
     """
+    
+    final_list = []
+
+    # ---------------------------------------------------------
+    # 1. BUSCAR EL ANUNCIO REAL (El que guardaste en el Admin)
+    # ---------------------------------------------------------
+    try:
+        real_data = load_announcement()
+        
+        # Solo lo mostramos si está activo y tiene mensaje
+        if real_data.get("active", True) and real_data.get("message"):
+            
+            # Traducir los colores del frontend a niveles del dashboard
+            variant = real_data.get("variant", "info")
+            level_map = {
+                "info": "INFO",
+                "success": "SUCCESS",
+                "warning": "WARNING",
+                "error": "DANGER",
+                "neutral": "INFO"
+            }
+            
+            real_announcement = Announcement(
+                id=999,  # ID fijo alto para que destaque
+                title="Aviso del Sistema", # Título genérico
+                message=real_data.get("message"),
+                level=level_map.get(variant, "INFO"),
+                role=None, # NULL significa "Para todos los roles"
+                created_at=datetime.utcnow()
+            )
+            
+            # Agregamos el anuncio real a la lista
+            final_list.append(real_announcement)
+
+    except Exception as e:
+        print(f"Error leyendo anuncio real: {e}")
+
+    # ---------------------------------------------------------
+    # 2. (OPCIONAL) ANUNCIOS FIJOS DE RESPALDO
+    # Si no hay anuncio real, mostramos uno de bienvenida
+    # ---------------------------------------------------------
+    if not final_list:
+        final_list.append(
+            Announcement(
+                id=1,
+                title="Bienvenido al Sistema",
+                message="Sistema operativo. No hay anuncios nuevos por el momento.",
+                level="INFO",
+                role=None,
+                created_at=datetime.utcnow(),
+            )
+        )
+
+    # Filtrado por rol (si el frontend lo pide)
     if role:
         role_upper = role.upper()
         return [
-            a for a in _fake_announcements
-            if a.role is None or a.role.upper() == role_upper
+            a for a in final_list
+            if a.role is None or (a.role and a.role.upper() == role_upper)
         ]
-    return _fake_announcements
+    
+    return final_list
