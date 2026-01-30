@@ -2,20 +2,25 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.database import init_db
 
-# 1. IMPORTACIONES
+# 1. IMPORTACIONES GENERALES
+# (He quitado 'dashboard' y 'announcements' de aquí para importarlos abajo de forma segura)
 from app.api import (
     example, users, auth, products, categories, customers, wallet,
-    payment_methods, marketing, recharges, licenses, dashboard, streaming,
+    payment_methods, marketing, recharges, licenses, streaming,
     payments, orders, guest, me, company, notifications, roles, addresses,
     phones, location, exchange, social, transactions, danlipagos,
-    withdrawals, announcements, admin_users, admin_products
+    withdrawals, admin_users, admin_products
 )
 
-# 🔥 IMPORTACIONES DIRECTAS Y SEGURAS (Bypaseamos el __init__.py)
-# Esto asegura que funcionen aunque no estén en la lista de arriba
+# 🔥 IMPORTACIONES BLINDADAS (Directas al archivo)
+# Esto obliga al servidor a leer el código nuevo y evita el error 404
+from app.api.dashboard import router as dashboard_router
+from app.api.announcements import router as announcements_router
+
+# Otras importaciones directas
 from app.api.v1.endpoints import reports as reports_endpoint
-from app.api.v1.endpoints import admin_providers # <--- ESTE FALTABA PARA LOS SALDOS
-from app.api.v1.endpoints import admin_stats     # <--- ESTE FALTABA PARA EL SUMMARY
+from app.api.v1.endpoints import admin_providers
+from app.api.v1.endpoints import admin_stats
 
 app = FastAPI(title="Backend Motostore")
 
@@ -79,30 +84,30 @@ app.include_router(licenses.router, prefix="/api/v1/licenses", tags=["licenses"]
 app.include_router(recharges.router, prefix="/api/v1/recharges", tags=["recharges"])
 
 # --- Sistema, Utilidades y Marketing ---
-app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["dashboard"])
+# 🔥 AQUÍ USAMOS LA VARIABLE NUEVA 'dashboard_router'
+app.include_router(dashboard_router, prefix="/api/v1/dashboard", tags=["dashboard"])
 
-# 🔥 CONEXIÓN DE REPORTES Y ADMIN (SOLUCIÓN A LOS 404)
+# Reportes
 app.include_router(reports_endpoint.router, prefix="/api/v1/reports", tags=["reports"])
 
-# -- Conectamos los saldos de proveedores (Danli/Legion) --
+# Proveedores y Stats
 try:
     app.include_router(admin_providers.router, prefix="/api/v1/admin/providers", tags=["admin_providers"])
 except Exception:
-    print("--- ADVERTENCIA: admin_providers no encontrado o con error ---")
+    print("--- ADVERTENCIA: admin_providers no encontrado ---")
 
-# -- Conectamos el resumen de estadísticas (Summary) --
 try:
     app.include_router(admin_stats.router, prefix="/api/v1/admin/stats", tags=["admin_stats"])
 except Exception:
-    # Si no existe admin_stats, usamos el dashboard como fallback
-    app.include_router(dashboard.router, prefix="/api/v1/admin/stats", tags=["admin_stats_fallback"])
+    app.include_router(dashboard_router, prefix="/api/v1/admin/stats", tags=["admin_stats_fallback"])
 
-# -- Alias para Anuncios (Para que funcionen las rutas viejas y nuevas) --
-app.include_router(announcements.router, prefix="/api/v1/announcements", tags=["announcements"])
-app.include_router(announcements.router, prefix="/api/v1/admin/announcement", tags=["announcements_legacy"])
-app.include_router(announcements.router, prefix="/api/v1/announcement-bar", tags=["announcement_bar"])
+# 🔥 AQUÍ USAMOS LA VARIABLE NUEVA 'announcements_router'
+app.include_router(announcements_router, prefix="/api/v1/announcements", tags=["announcements"])
+app.include_router(announcements_router, prefix="/api/v1/admin/announcement", tags=["announcements_legacy"])
+app.include_router(announcements_router, prefix="/api/v1/announcement-bar", tags=["announcement_bar"])
 
 
+# Otros servicios
 app.include_router(notifications.router, prefix="/api/v1/notifications", tags=["notifications"])
 app.include_router(company.router, prefix="/api/v1/company", tags=["company"])
 app.include_router(location.router, prefix="/api/v1/location", tags=["location"])
